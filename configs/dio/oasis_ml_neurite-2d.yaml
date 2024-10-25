@@ -34,7 +34,7 @@ diffopt:
 
 dataset:
   name: neurite-oasis
-  data_root: ../data/neurite-oasis
+  data_root: ./data/neurite-oasis
 
 batch_size: 16
 num_workers: 4

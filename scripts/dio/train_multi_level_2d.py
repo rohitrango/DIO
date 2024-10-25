@@ -11,11 +11,12 @@ from models.TransMorph import TransFeX
 from models.unet3d import UNet2D, UNetEncoder2D
 from models.lku2d import LKUNet2D
 from models.configs_TransMorph import get_3DTransFeX_config
-from solver.adam import multi_scale_warp_solver, multi_scale_diffeomorphic_solver, multi_scale_affine2d_solver
+from solver.diffeo import multi_scale_warp_solver, multi_scale_diffeomorphic_solver
+from solver.affine import multi_scale_affine2d_solver
 from solver.utils import gaussian_1d, img2v_2d, v2img_2d, separable_filtering
 from solver.losses import NCC_vxm, DiceLossWithLongLabels, _get_loss_function_factory
 from solver.losses import LocalNormalizedCrossCorrelationLoss
-from solver.adam import ALIGN_CORNERS as align_corners
+from solver.diffeo import ALIGN_CORNERS as align_corners
 
 # logging
 import wandb
@@ -60,7 +61,7 @@ def torch2wandbimg(tensor, mask_data=None):
         return wandb.Image(tensor_npy)
     return wandb.Image(tensor_npy, masks={'labels': {'mask_data': mask_data}})
 
-@hydra.main(config_path='./configs', config_name='default')
+@hydra.main(config_path='../../configs/dio/', config_name='oasis_ml_neurite-2d')
 def main(cfg):
     # init setup
     init_wandb(cfg, project_name='TransFeX')
@@ -83,13 +84,6 @@ def main(cfg):
         model = UNet2D(input_channels, cfg.model.output_channels, f_maps=cfg.model.f_maps, levels=cfg.model.levels, skip=cfg.model.skip).cuda()
     elif cfg.model.name == 'transmorph':
         raise NotImplementedError
-        model_cfg = get_3DTransFeX_config()
-        model_cfg['levels'] = list(cfg.model.levels)
-        model_cfg['output_channels'] = cfg.model.output_channels
-        model_cfg['in_chans'] = input_channels
-        ## change any model config here
-        ## load model and optionally weights
-        model = TransFeX(model_cfg).cuda()
     elif cfg.model.name == 'unetencoder':
         model = UNetEncoder2D(input_channels, cfg.model.output_channels, f_maps=cfg.model.f_maps, levels=cfg.model.levels, multiplier=cfg.model.multiplier).cuda()
     elif cfg.model.name == 'lku':

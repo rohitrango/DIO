@@ -4,14 +4,13 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) 
 # make sure the parent of this folder is in path to be 
 # able to access everything
 from models.TransMorph import TransFeX
 from models.unet3d import UNet2D, UNet3D, UNetEncoder3D
 from models.lku import LKUNet, LKUEncoder
 from models.configs_TransMorph import get_3DTransFeX_config
-from solver.adam import multi_scale_warp_solver, multi_scale_diffeomorphic_solver, multi_scale_affine2d_solver
+from solver.diffeo import multi_scale_warp_solver, multi_scale_diffeomorphic_solver 
 from solver.utils import gaussian_1d, img2v_3d, v2img_3d, separable_filtering
 from solver.losses import NCC_vxm, DiceLossWithLongLabels, _get_loss_function_factory
 from solver.losses import LocalNormalizedCrossCorrelationLoss
@@ -35,7 +34,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 
 # this is a global setting to stay compatible with scipy's grid sampling
-from solver.adam import ALIGN_CORNERS as align_corners
+from solver.diffeo import ALIGN_CORNERS as align_corners
 
 datasets = {
     'oasis': OASIS,
@@ -80,7 +79,7 @@ def setup_ddp(rank, world_size, port=12355):
 def cleanup_ddp():
     dist.destroy_process_group()
 
-@hydra.main(config_path='./configs', config_name='default')
+@hydra.main(config_path='../../configs/dio/', config_name='oasis_ml_freeform_d4_3D')
 def mainfunc(cfg):
     # get ddp if specified
     if not cfg.ddp.enabled:
@@ -208,8 +207,6 @@ def main(rank, cfg, world_size=1):
         diffopt_solver = multi_scale_diffeomorphic_solver
     elif cfg.diffopt.warp_type == 'freeform':
         diffopt_solver = multi_scale_warp_solver
-    elif cfg.diffopt.warp_type == 'affine':
-        diffopt_solver = multi_scale_affine2d_solver
     else:
         raise ValueError(f"Unknown solver: {cfg.diffopt.solver}")
     

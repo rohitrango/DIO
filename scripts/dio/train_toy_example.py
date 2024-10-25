@@ -1,150 +1,24 @@
 from typing import Any
 import torch
-from torch.nn import functional as F
 from torch.utils.data import DataLoader
+from torch.nn import functional as F
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) 
-# make sure the parent of this folder is in path to be 
-# able to access everything
-# logging
 import wandb
 import hydra
-from utils import set_seed, init_wandb, open_log, cleanup
+from utils import set_seed, init_wandb, open_log, cleanup, resolve_layer_idx, reshape_util
 from datasets.toyexamples import SquareDataset, Square3DDataset
 from models.unet import ResNetUNet as UNet
 from models.unet3d import UNet3D
 import numpy as np
-# get cuda gridsample
-# from cuda_gridsample_grad2.cuda_gridsample import grid_sample_2d, grid_sample_3d
-try:
-    from cuda_gridsample_grad2_py19.cuda_gridsample import grid_sample_3d, grid_sample_2d
-    print("Loaded for py19 version")
-except:
-    from cuda_gridsample_grad2.cuda_gridsample import grid_sample_3d, grid_sample_2d
+from solver.affine import run_affine_transform_2d, run_affine_transform_3d
 
 datasets = {
     'square': SquareDataset,
     'square3d': Square3DDataset,
 }
 
-class IFTGrad(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, func, affine):
-        ctx.func = func
-        ctx.save_for_backward(affine.detach())
-        return affine
-    
-    @staticmethod
-    def backward(ctx, grad_affine):
-        func = ctx.func
-        affine_pred = ctx.saved_tensors[0].clone().detach().requires_grad_(True)
-        with torch.enable_grad():
-            affine = func(affine_pred)
-        grad_f = lambda x: torch.autograd.grad(affine, affine_pred, x, retain_graph=True)[0] + grad_affine
-        grad_f_opt = grad_affine
-        for it in range(100):
-            grad_f_opt_new = grad_f(grad_f_opt)
-            if torch.isnan(grad_f_opt_new).any():
-                break
-            grad_f_opt = torch.clamp(grad_f_opt_new, -0.1, 0.1)
-        return None, grad_f_opt
-        
-def run_affine_transform_2d(fixed_features, moving_features, iterations, init_affine=None, debug=True):
-    ''' initialize affine transform and run optimization 
-    fixed_features, moving_features: [B, C, H, W]
-    iterations: int
-    '''
-    batch_size = fixed_features.shape[0]
-    if init_affine is not None:
-        affine_map = init_affine.clone().detach().requires_grad_(True)
-    else:
-        affine_map = torch.eye(2, 3)[None].cuda().repeat(batch_size, 1, 1)  # [B, 2, 3]
-        affine_map = affine_map.requires_grad_(True)
-    losses_opt = []
-    # define function
-    def f(affine_map, lr=0.1, log=False):
-        ''' affine_map: [B, 2, 3] '''
-        with torch.set_grad_enabled(True):
-            grid = F.affine_grid(affine_map, fixed_features.shape, align_corners=True)
-            # moved_features = F.grid_sample(moving_features, grid, align_corners=True)
-            moved_features = grid_sample_2d(moving_features, grid, align_corners=True)
-            loss = F.mse_loss(moved_features, fixed_features)
-            if log:
-                losses_opt.append(loss.item())
-            affine_grad = torch.autograd.grad(loss, affine_map, create_graph=True)[0]
-            # SGD update
-            affine_map = affine_map - lr * affine_grad
-        return affine_map
-    
-    # forward pass
-    with torch.no_grad():
-        for it in range(iterations):
-            affine_map = f(affine_map, log=True)
-    # attach ift hook
-    affine_map = affine_map.clone().detach().requires_grad_(True)
-    for i in range(3):
-        affine_map = f(affine_map, log=False)
-    # affine_map = IFTGrad.apply(f, affine_map)
-    return affine_map, losses_opt
-
-def run_affine_transform_3d(fixed_features, moving_features, iterations, init_affine=None, debug=True):
-    ''' initialize affine transform and run optimization 
-    fixed_features, moving_features: [B, C, H, W, D]
-    iterations: int
-    '''
-    batch_size = fixed_features.shape[0]
-    if init_affine is not None:
-        affine_map = init_affine.clone().detach().requires_grad_(True)
-    else:
-        affine_map = torch.eye(3, 4)[None].cuda().repeat(batch_size, 1, 1)  # [B, 2, 3]
-        affine_map = affine_map.requires_grad_(True)
-    losses_opt = []
-    # define function
-    def f(affine_map, lr=0.1, log=False):
-        ''' affine_map: [B, 2, 3] '''
-        with torch.set_grad_enabled(True):
-            grid = F.affine_grid(affine_map, fixed_features.shape, align_corners=True)
-            # moved_features = F.grid_sample(moving_features, grid, align_corners=True)
-            moved_features = grid_sample_3d(moving_features, grid, align_corners=True)
-            loss = F.mse_loss(moved_features, fixed_features)
-            if log:
-                losses_opt.append(loss.item())
-            affine_grad = torch.autograd.grad(loss, affine_map, create_graph=True)[0]
-            # SGD update
-            affine_map = affine_map - lr * affine_grad
-        return affine_map
-    
-    # forward pass
-    with torch.no_grad():
-        for it in range(iterations):
-            affine_map = f(affine_map, log=True)
-    # attach ift hook
-    affine_map = affine_map.clone().detach().requires_grad_(True)
-    for i in range(1):
-        affine_map = f(affine_map, log=False)
-    return affine_map, losses_opt
-
-
-def resolve_layer_idx(epoch, cfg):
-    ''' resolve the layer index to use for the current epoch '''
-    epoch_new_level = cfg.train.train_new_level
-    idx = 0
-    for lvl in epoch_new_level:
-        if epoch >= lvl:
-            idx += 1
-    return idx
-
-def reshape_util(feature, channels):
-    ''' feature: [B, C, H, W] '''
-    B, C, H, W = feature.shape
-    if C < channels:
-        pass
-    else:
-        feature = feature.reshape(B, C//channels, channels, H, W).mean(1)  # [B, channels, H, W]
-    return feature
-
-@hydra.main(config_path='./configs', config_name='default')
+@hydra.main(config_path='../../configs/dio', config_name='square')
 def main(cfg):
     # init setup
     init_wandb(cfg, project_name='TransFeX-toyexample')
@@ -216,18 +90,11 @@ def main(cfg):
                 fixed_img = 2*fixed_label.repeat(1, 3, 1, 1) - 1
                 moving_img = 2*moving_label.repeat(1, 3, 1, 1) - 1
             # get features
-            # fixed_features, moving_features = model(fixed_img), model(moving_img)
-            # out, layer4, layer3, layer2, layer1 = model(fixed_img)
-            # fixed_features, moving_features = model(fixed_img)[idx], model(moving_img)[idx]
             if cfg.train.train_all_levels:
                 fixed_features_list, moving_features_list = model(fixed_img)[:idx+1], model(moving_img)[:idx+1]
             else:
                 fixed_features_list, moving_features_list = model(fixed_img)[idx:idx+1], model(moving_img)[idx:idx+1]
-            # for i in range(len(fixed_features_list)):
-            #     fixed_features_list[i] = reshape_util(fixed_features_list[i], cfg.model.output_channels)
-            #     moving_features_list[i] = reshape_util(moving_features_list[i], cfg.model.output_channels)
-            # run affine transform function  (B, 2, 3)
-            # affine_map_list, losses_opt = run_affine_transform_2d(fixed_features_list, moving_features_list, iterations=cfg.diffopt.iterations, debug=True) 
+            # get affine maps
             affine_map_list = [None]
             N = len(fixed_features_list)
             for i in range(N):
@@ -314,7 +181,6 @@ def main(cfg):
     # cleanup logging and wandb
     cleanup(cfg, fp)
     
-
 if __name__ == '__main__':
     try:
         main()

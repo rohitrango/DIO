@@ -62,3 +62,21 @@ def cleanup(cfg, fp, rank=0):
         sys.stderr = sys.__stderr__
         # if rank == 0:
         wandb.finish()
+
+def resolve_layer_idx(epoch, cfg):
+    ''' resolve the layer index to use for the current epoch '''
+    epoch_new_level = cfg.train.train_new_level
+    idx = 0
+    for lvl in epoch_new_level:
+        if epoch >= lvl:
+            idx += 1
+    return idx
+
+def reshape_util(feature, channels):
+    ''' feature: [B, C, H, W] '''
+    B, C, H, W = feature.shape
+    if C < channels:
+        pass
+    else:
+        feature = feature.reshape(B, C//channels, channels, H, W).mean(1)  # [B, channels, H, W]
+    return feature

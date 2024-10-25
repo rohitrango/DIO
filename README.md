@@ -10,3 +10,9 @@ This is a **PyTorch** implementation of our paper:
 
 More coming soon.
 
+
+## Installation instructions
+
+Run the commands as 
+
+```PYTHONPATH=./ python ... ```
