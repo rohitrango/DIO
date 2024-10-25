@@ -1,0 +1,43 @@
+## oasis is the dataset
+## sl is the "single-level" task
+## d4 is the "downsampled 4" level
+defaults:
+  - oasis_ml_d4_2D
+  - _self_
+
+tag: oasis_ml_ff_d4
+
+model:
+  # f_maps: [64, 64, 128]
+  # levels: [1, 2, 4]   
+  f_maps: [64, 128]
+  levels: [1, 2]
+  name: unetencoder
+  multiplier: 1
+
+train:
+  lr: 1e-4
+  lr_power_decay: 0.0   # polynomial power decay for learning rate
+  cc_unsigned: True        # if set to True, will compute the unsigned NCC
+  train_new_level: [50]    # list should be one less than the number of levels
+
+loss:
+  weight_ncc: 1
+
+# parameters for diffeomorphic optimization
+diffopt: 
+  warp_type: 'diffeomorphic'
+  # iterations: [200, 100, 50]
+  iterations: [100, 50]
+  phantom_step: sgd   # works better for freeform
+  n_phantom_steps: 1
+
+dataset:
+  name: neurite-oasis
+  data_root: ../data/neurite-oasis
+
+batch_size: 16
+num_workers: 4
+model_path: Null
+save_dir: ''
+save_every: 250

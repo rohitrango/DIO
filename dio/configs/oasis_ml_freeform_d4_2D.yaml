@@ -1,0 +1,23 @@
+## oasis is the dataset
+## sl is the "single-level" task
+## d4 is the "downsampled 4" level
+defaults:
+  - oasis_ml_d4_2D
+  - _self_
+
+tag: oasis_ml_ff_d4
+
+# parameters for diffeomorphic optimization
+diffopt: 
+  warp_type: 'freeform'
+  iterations: [200, 100, 50]
+  phantom_step: sgd   # works better for freeform
+
+dataset:
+  name: oasis
+  data_root: ../data/oasis
+
+batch_size: 16
+num_workers: 4
+model_path: Null
+save_dir: ''

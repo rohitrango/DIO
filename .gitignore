@@ -1,0 +1,13 @@
+*.pyc
+notebooks/
+notebooks/.ipynb_checkpoints/
+data/
+**/logs
+**/void
+**/wandb
+*.npz
+**/saved_models
+**/wandb
+.vscode
+cuda_gridsample_grad2_py19
+cuda_gridsample_grad2

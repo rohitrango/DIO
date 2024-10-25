@@ -1,0 +1,16 @@
+*pyc
+notebooks/.ipynb_checkpoints/
+data/
+transfex/logs
+transfex/void
+transfex/wandb
+OASIS/TransMorph/experiments
+OASIS/TransMorph/logs
+notebooks/
+*.npz
+saved_models
+**/wandb
+.vscode
+cuda_gridsample_grad2_py19
+cuda_gridsample_grad2
+

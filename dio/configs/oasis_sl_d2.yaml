@@ -1,0 +1,14 @@
+## oasis is the dataset
+## sl is the "single-level" task
+## d4 is the "downsampled 4" level
+defaults:
+  - oasis_sl_d4
+  - _self_
+
+tag: oasis_sl_d2
+
+model:
+  levels: 2
+
+diffopt:
+  iterations: 50

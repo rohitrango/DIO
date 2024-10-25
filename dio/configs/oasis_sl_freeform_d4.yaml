@@ -1,0 +1,32 @@
+## oasis is the dataset
+## sl is the "single-level" task
+## d4 is the "downsampled 4" level
+defaults:
+  - oasis_sl_d4
+  - _self_
+
+tag: oasis_sl_ff_d4
+
+train:
+  epochs: 100
+  lr: 3e-4
+  backprop_both: True   # do we want to backprop through both the fixed and moving features
+  lr_power_decay: 0.7   # polynomial power decay for learning rate
+
+loss:
+  weight_dice: 1.0
+  weight_ncc: 1.0
+  # decay_mse: 0.873      # decay rate for MSE loss of the feature average versus the target
+  decay_mse: 0.0
+
+# parameters for diffeomorphic optimization
+diffopt: 
+  warp_type: 'freeform'
+  sigma_warp: -1
+  sigma_grad: 1.0
+  gradual: True
+  feature_loss_fn: 'l2'
+
+dataset:
+  name: oasis
+  data_root: ../data/oasis

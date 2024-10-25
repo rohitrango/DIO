@@ -1,0 +1,30 @@
+deploy: False
+tag: scratch
+seed: 0
+resume: False
+exp_name: Null   # populate as you go
+
+# Nested configs. Disable hydra logging
+defaults:
+  - _self_
+  #- hp: cifar10  # Use this for nested file directories
+  - override hydra/job_logging: disabled
+  - override hydra/hydra_logging: disabled
+
+log_wandb: True  # true by default
+
+# Disable hydra directory structure
+hydra:
+  output_subdir: Null
+  run:
+    dir: .
+
+  sweep:
+    dir: .
+    subdir: .# Nested configs. Disable hydra logging
+
+# parameters for distributed training
+ddp:
+  enabled: False
+  world_size: 4
+  port: 12235

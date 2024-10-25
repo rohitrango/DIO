@@ -1,0 +1,34 @@
+## oasis is the dataset
+## sl is the "single-level" task
+## d4 is the "downsampled 4" level
+defaults:
+  - oasis_ml_4x2x_unetencoder
+  - _self_
+
+tag: oasis_ml_4x2x1x
+
+model:
+  f_maps: [32, 32, 64]
+  name: unetencoder
+  levels: [1, 2, 4]   
+  multiplier: 1
+
+train:
+  epochs: 250
+  train_new_level: [25, 100]    # list should be one less than the number of levels
+  backprop_both: False   # do we want to backprop through both the fixed and moving features
+  lr_power_decay: 0.9   # polynomial power decay for learning rate
+  cc_unsigned: True        # if set to True, will compute the unsigned NCC
+
+loss:
+  downsampled_label_warps: False
+  dice_order: 2
+  weight_ncc: 1.0
+
+# parameters for diffeomorphic optimization
+diffopt: 
+  iterations: [200, 100, 20]
+  n_phantom_steps: 1
+  phantom_step: sgd
+
+save_every: 300

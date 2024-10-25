@@ -1,0 +1,33 @@
+## oasis is the dataset
+## sl is the "single-level" task
+## d4 is the "downsampled 4" level
+defaults:
+  - square
+  - _self_
+
+tag: square3d
+
+train:
+  epochs: 500
+  train_new_level: [50, 100, 150, 200]   # these are the epochs at which we add a new level
+  train_all_levels: True
+  lr: 3e-4
+  backprop_both: False   # do we want to backprop through both the fixed and moving features
+  lr_power_decay: 0.7   # polynomial power decay for learning rate
+
+loss:
+  weight_dice: 1.0
+  weight_ncc: 1.0
+  decay_mse: 0.0      # decay rate for MSE loss of the feature average versus the target
+
+# parameters for diffeomorphic optimization
+diffopt: 
+  iterations: 100
+  sigma_warp: -1
+  sigma_grad: 0.5
+  gradual: True
+
+dataset:
+  name: square3d
+
+batch_size: 8

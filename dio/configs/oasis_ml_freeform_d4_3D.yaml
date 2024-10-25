@@ -1,0 +1,43 @@
+## oasis is the dataset
+## sl is the "single-level" task
+## d4 is the "downsampled 4" level
+defaults:
+  - oasis_ml_freeform_d4_2D
+  - _self_
+
+tag: oasis_ml_ff_d4
+
+model:
+  # f_maps: 32
+  f_maps: [16, 16, 32, 32, 64]
+  name: unet
+  combine: False    # combine fixed and moving into a single image
+
+train:
+  # epochs: 100
+  # train_new_level: [25, 60]    # list should be one less than the number of levels
+  epochs: 500
+  train_new_level: [10, 100]    # list should be one less than the number of levels
+  backprop_both: False   # do we want to backprop through both the fixed and moving features
+  lr_power_decay: 0.9   # polynomial power decay for learning rate
+
+loss:
+  downsampled_label_warps: Null
+  dice_order: 2       # change default dice order to 2
+  weight_label_center: 0  # no center loss by default
+  center_dice_threshold: 0.5
+  dice_l2_mode: False     # whether to use L2 distance for dice loss during training
+  img_loss: ncc
+  train_last_warp_only: False   # whether to train all layers or just last one
+
+# parameters for diffeomorphic optimization
+diffopt: 
+  warp_type: 'freeform'
+  # iterations: [100, 50, 25]
+  iterations: [200, 100, 50]
+  n_phantom_steps: 1
+  phantom_step: sgd
+  convergence_eps: 1e-3 # change this
+
+batch_size: 1
+num_workers: 1

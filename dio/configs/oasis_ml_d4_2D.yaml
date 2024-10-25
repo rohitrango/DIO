@@ -1,0 +1,58 @@
+## oasis is the dataset
+## sl is the "single-level" task
+## d4 is the "downsampled 4" level
+defaults:
+  - default
+  - _self_
+
+deploy: True
+tag: oasis_ml_d4
+
+model:
+  levels: [1, 2, 4]       # can be any order, it is sorted inside the network (processing is done from lowest to highest res though)
+  output_channels: 16     # number of channels in feature extractor
+  init_zero_features: False  # initialize the feature extractor with zeros
+  skip: True
+
+train:
+  epochs: 1000
+  lr: 3e-4
+  train_new_level: [25, 150]    # list should be one less than the number of levels
+  backprop_both: True   # do we want to backprop through both the fixed and moving features
+  lr_power_decay: 0.7   # polynomial power decay for learning rate
+  feature_grad_norm: -1
+  image_noise_sigma: 0.0   # how much noise to add to NCC calculation
+  cc_smooth_nr: 1e-5       # `smooth_nr` term for numerator
+  cc_unsigned: False        # if set to True, will compute the unsigned NCC
+
+loss:
+  weight_dice: 1.0
+  weight_ncc: 0.25
+  weight_jacobian: 0.0
+  decay_mse: 0.0      # decay rate for MSE loss of the feature average versus the target
+  downsampled_warps: True    # if set to True, will compute the ncc between downsampled moving and fixed images (default)
+  downsampled_label_warps: False
+  train_last_warp_only: False   # whether to train all layers or just last one
+
+# parameters for diffeomorphic optimization
+diffopt: 
+  warp_type: 'diffeomorphic'
+  iterations: [200, 100, 50]  
+  sigma_warp: 0.5
+  sigma_grad: 1.0
+  gradual: False
+  feature_loss_fn: 'l2'
+  phantom_step: adam     
+  clip_warp_grad_per: 100
+  n_phantom_steps: 3
+
+dataset:
+  name: oasis
+  data_root: ../data/oasis
+  split: train
+
+batch_size: 16
+num_workers: 4
+model_path: Null
+save_dir: ''
+save_every: 100

@@ -1,0 +1,31 @@
+## oasis is the dataset
+## sl is the "single-level" task
+## d4 is the "downsampled 4" level
+defaults:
+  - oasis_ml_freeform_d4_3D
+  - _self_
+
+tag: oasis_ml_4x2x
+
+model:
+  f_maps: [16, 16, 32, 32, 64]
+  name: unet
+  levels: [2, 4]   
+
+train:
+  epochs: 500
+  train_new_level: [20]    # list should be one less than the number of levels
+  backprop_both: False   # do we want to backprop through both the fixed and moving features
+  lr_power_decay: 0.9   # polynomial power decay for learning rate
+  cc_unsigned: True        # if set to True, will compute the unsigned NCC
+
+loss:
+  downsampled_label_warps: False
+
+# parameters for diffeomorphic optimization
+diffopt: 
+  iterations: [200, 100]
+  n_phantom_steps: 3
+  phantom_step: sgd
+
+save_every: 200
