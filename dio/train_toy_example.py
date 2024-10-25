@@ -12,8 +12,8 @@ import wandb
 import hydra
 from utils import set_seed, init_wandb, open_log, cleanup
 from datasets.toyexamples import SquareDataset, Square3DDataset
-from TransMorph.models.unet import ResNetUNet as UNet
-from TransMorph.models.unet3d import UNet3D
+from models.unet import ResNetUNet as UNet
+from models.unet3d import UNet3D
 import numpy as np
 # get cuda gridsample
 # from cuda_gridsample_grad2.cuda_gridsample import grid_sample_2d, grid_sample_3d

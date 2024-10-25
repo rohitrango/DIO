@@ -7,8 +7,8 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) 
 # make sure the parent of this folder is in path to be 
 # able to access everything
-from TransMorph.models.TransMorph import TransFeX
-from TransMorph.models.configs_TransMorph import get_3DTransFeX_config
+from models.TransMorph import TransFeX
+from models.configs_TransMorph import get_3DTransFeX_config
 from losses import NCC_vxm, DiceLossWithLongLabels 
 from solver.adam import multi_scale_diffeomorphic_solver
 from solver.utils import gaussian_1d, img2v_3d, v2img_3d
