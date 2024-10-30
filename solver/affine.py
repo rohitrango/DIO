@@ -110,7 +110,6 @@ def run_affine_transform_3d(fixed_features, moving_features, iterations, init_af
         affine_map = f(affine_map, log=False)
     return affine_map, losses_opt
 
-
 def multi_scale_affine2d_solver(fixed_features, moving_features, iterations, loss_function, init_affine=None, debug=True, **kwargs):
     init_affine = None
     warps = []
@@ -121,7 +120,7 @@ def multi_scale_affine2d_solver(fixed_features, moving_features, iterations, los
         moving = moving_features[i]
         iters = iterations[i]
         affine, loss = single_scale_affine2d_solver(fixed, moving, iters, loss_function, init_affine, debug, **kwargs)
-        warp = F.affine_grid(affine, fixed.shape, align_corners=align_corners)
+        warp = F.affine_grid(affine, fixed.shape, align_corners=True)
         warps.append(warp)
         losses.append(loss)
         init_affine = affine
@@ -149,9 +148,9 @@ def single_scale_affine2d_solver(fixed_features, moving_features, iterations, lo
     def f(affine_map, lr=0.1, log=False):
         ''' affine_map: [B, 2, 3] '''
         with torch.set_grad_enabled(True):
-            grid = F.affine_grid(affine_map, fixed_features.shape, align_corners=align_corners)
+            grid = F.affine_grid(affine_map, fixed_features.shape, align_corners=True)
             # moved_features = F.grid_sample(moving_features, grid, align_corners=align_corners)
-            moved_features = grid_sample_2d(moving_features, grid, align_corners=align_corners)
+            moved_features = grid_sample_2d(moving_features, grid, align_corners=True)
             loss = loss_function(moved_features, fixed_features)
             if log:
                 losses_opt.append(loss.item())

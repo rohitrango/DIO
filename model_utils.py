@@ -4,6 +4,21 @@ from torch import nn
 from torch.nn import functional as F
 from typing import List, Optional
 from solver.losses import ItemOrList, gaussian_1d, separable_filtering
+import copy
+
+def interpolate_warp(warp: torch.Tensor, size: List[int]):
+    ''' function to interpolate a warp '''
+    dims = len(warp.shape) - 2
+    if dims == 2:
+        B, H, W, _ = warp.shape
+        warpimg = F.interpolate(warp.permute(0, 3, 1, 2), size=size, mode='bilinear', align_corners=True)
+        return warpimg.permute(0, 2, 3, 1)
+    elif dims == 3:
+        B, H, W, D, _ = warp.shape
+        warpimg = F.interpolate(warp.permute(0, 4, 1, 2, 3), size=size, mode='trilinear', align_corners=True)
+        return warpimg.permute(0, 2, 3, 4, 1)
+    else:
+        raise NotImplementedError
 
 def displacements_to_warps(displacements):
     ''' given a list of displacements, add warps to them '''
@@ -34,3 +49,22 @@ def downsample(image: ItemOrList[torch.Tensor], size: List[int], mode: str, sigm
     image_smooth = separable_filtering(image, gaussians)
     image_down = F.interpolate(image_smooth, size=size, mode=mode, align_corners=True)
     return image_down
+
+
+## Write an EMA class that copies a model and updates the weights
+class EMA:
+    def __init__(self, model: torch.nn.Module, decay: float, device: torch.device):
+        self.model = copy.deepcopy(model)
+        self.decay = decay
+        self.device = device
+        self.model.to(self.device)
+        self.model.eval()
+
+    def update(self, model: torch.nn.Module):
+        with torch.no_grad():
+            for ema_param, model_param in zip(self.model.parameters(), model.parameters()):
+                ema_param.data.mul_(self.decay).add_(model_param.data, alpha=1 - self.decay)
+
+    def to(self, device: torch.device):
+        self.device = device
+        self.model.to(device)

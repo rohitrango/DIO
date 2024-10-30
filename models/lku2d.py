@@ -19,12 +19,12 @@ class LK_encoder(nn.Module):
         self.layer_oneKernel = self.encoder_LK_encoder(self.in_channels, self.out_channels, kernel_size = 1, stride=1, padding=0, bias=self.bias, batchnorm = self.batchnorm)
         self.layer_nonlinearity = nn.PReLU()
 
-        # self.layer_batchnorm = nn.BatchNorm2d(num_features = self.out_channels)
+        # self.layer_batchnorm = nn.InstanceNorm2d(num_features = self.out_channels)
     def encoder_LK_encoder(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False, batchnorm=False):
         if batchnorm:
             layer = nn.Sequential(
                 nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias),
-                nn.BatchNorm2d(out_channels))
+                nn.InstanceNorm2d(out_channels))
         else:
             layer = nn.Sequential(
                 nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias))
@@ -93,7 +93,7 @@ class LKUNet2D(nn.Module):
         if batchnorm:
             layer = nn.Sequential(
                 nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias),
-                nn.BatchNorm2d(out_channels),
+                nn.InstanceNorm2d(out_channels),
                 nn.PReLU())
         else:
             layer = nn.Sequential(
@@ -114,12 +114,14 @@ class LKUNet2D(nn.Module):
         if batchnorm:
             layer = nn.Sequential(
                 nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias),
-                nn.BatchNorm2d(out_channels),
-                nn.Tanh())
+                nn.InstanceNorm2d(out_channels),
+                # nn.Tanh())
+            )
         else:
             layer = nn.Sequential(
                 nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias),
-                nn.Softsign())
+            )
+                # nn.Softsign())
         return layer
 
     def forward(self, x):

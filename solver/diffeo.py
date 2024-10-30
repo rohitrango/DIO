@@ -249,7 +249,7 @@ def multi_scale_warp_solver(
         eps: float = 1e-8,
         n_phantom_steps: int = 3,
         return_jacobian_norm: int = 1,  # how many estimators to compute
-        phantom_step: str = 'adam',   # choices = sgd, adam
+        phantom_step: str = 'sgd',   # choices = sgd, adam
         convergence_tol: int = 4,       # if loss increases for "C" iterations, abort
         convergence_eps: float = 1e-3,
         cfg: Optional[dict] = None
