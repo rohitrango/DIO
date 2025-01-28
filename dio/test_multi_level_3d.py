@@ -10,7 +10,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from models.TransMorph import TransFeX
 from models.unet3d import UNet2D, UNet3D
 from models.configs_TransMorph import get_3DTransFeX_config
-from solver.adam import multi_scale_warp_solver, multi_scale_diffeomorphic_solver, multi_scale_affine2d_solver
+from solver.diffeo import multi_scale_warp_solver,  \
+                            multi_scale_diffeomorphic_solver,  \
+                            multi_scale_affine2d_solver,  \
+                            multi_scale_affine3d_and_freeform_solver
 from solver.utils import gaussian_1d, img2v_3d, v2img_3d, separable_filtering
 from solver.losses import NCC_vxm, DiceLossWithLongLabels, _get_loss_function_factory
 from solver.losses import LocalNormalizedCrossCorrelationLoss
@@ -80,8 +83,6 @@ def main(cfg):
     print(f"Dataset has {len(train_dataset)} samples.")
 
     ### Load UNet with no skip connections
-    # model = UNet3D(1, cfg.model.output_channels, levels=cfg.model.levels, skip=cfg.model.skip).cuda()
-    # model = UNet3D(1, cfg.model.output_channels, f_maps=cfg.model.f_maps, levels=cfg.model.levels, skip=cfg.model.skip).cuda()
     input_channels = 1
     if cfg.model.name == 'unet':
         model = UNet3D(input_channels, cfg.model.output_channels, f_maps=cfg.model.f_maps, levels=cfg.model.levels, skip=cfg.model.skip).cuda()
@@ -118,7 +119,6 @@ def main(cfg):
     print("Best dice score: ", 1-saved_data['best_dice_loss'])
     print(f"Model has {count_parameters(model)} parameters.")
 
-
     # choose optimization solver
     if cfg.diffopt.warp_type == 'diffeomorphic':
         diffopt_solver = multi_scale_diffeomorphic_solver
@@ -126,6 +126,8 @@ def main(cfg):
         diffopt_solver = multi_scale_warp_solver
     elif cfg.diffopt.warp_type == 'affine':
         diffopt_solver = multi_scale_affine2d_solver
+    elif cfg.diffopt.warp_type == 'affine_and_freeform':
+        diffopt_solver = multi_scale_affine3d_and_freeform_solver
     else:
         raise ValueError(f"Unknown solver: {cfg.diffopt.solver}")
     

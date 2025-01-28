@@ -848,7 +848,7 @@ class AbstractUNet(nn.Module):
         ''' init all the convs in the network '''
         is_relu = 'r' in self.layer_order
         # iterate through all conv layers
-        for mod in self.modules():
+        for param, mod in self.named_modules():
             if isinstance(mod, nn.Conv3d) or isinstance(mod, nn.Conv2d):
                 # init weights
                 nn.init.kaiming_normal_(mod.weight, a=None, mode='fan_out', nonlinearity='relu' if is_relu else 'leaky_relu')

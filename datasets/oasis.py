@@ -13,6 +13,7 @@ import numpy as np
 import pprint
 from PIL import Image
 import json
+from torch.nn import functional as F
 
 class OASISImageOnly(Dataset):
     ''' dataset that only returns images (consider transforms here) '''
@@ -136,9 +137,14 @@ class OASISNeurite(Dataset):
     '''
     neurite version of the dataset
     '''
-    def __init__(self, data_root='data/neurite-oasis', split='train', seed=1685, is3d=True):
+    def __init__(self, data_root='data/neurite-oasis', split='train', seed=1685, 
+                 is3d=True, seg4=False, one_hot=False, binary_mask=False,
+                 normalize=False,
+                 ):
         super().__init__()
         self.data_root = data_root
+        self.one_hot = one_hot
+        self.normalize = normalize
         if split != 'test':
             self.images = sorted(glob(osp.join(data_root, 'OASIS*MR1', 'aligned_norm.nii.gz' if is3d else 'slice_norm.nii.gz')))
             self.labels = sorted(glob(osp.join(data_root, 'OASIS*MR1', 'aligned_seg35.nii.gz' if is3d else 'slice_seg24.nii.gz')))
@@ -156,7 +162,10 @@ class OASISNeurite(Dataset):
         # save extra args 
         self.split = split
         self.N = len(self.images) - (0 if self.split == 'train' else 1)
-        self.max_label_index = 35 if is3d else 24   # the dataset is labeled from 0 to 35
+        self.max_label_index = 35 if is3d else (24 if not seg4 else 4)   # the dataset is labeled from 0 to 35
+        self.binary_mask = binary_mask
+        if binary_mask:
+            self.max_label_index = 1
         self.is3d = is3d
         self.rng = np.random.RandomState(seed)
 
@@ -206,8 +215,24 @@ class OASISNeurite(Dataset):
         # put them in output
         output['source_img'] = torch.from_numpy(src_img).float()[None]# *2 - 1
         output['target_img'] = torch.from_numpy(tgt_img).float()[None]# *2 - 1
+        if self.normalize:
+            output['source_img'] = output['source_img'] * 2 - 1
+            output['target_img'] = output['target_img'] * 2 - 1
+        # process labels
         output['source_label'] = torch.from_numpy(src_label).long()[None] if src_label is not None else 0
         output['target_label'] = torch.from_numpy(tgt_label).long()[None] if tgt_label is not None else 0
+        if self.binary_mask:
+            output['source_label'] = (output['source_label'] > 0).long()
+            output['target_label'] = (output['target_label'] > 0).long()
+
+        if self.one_hot and (output['source_label'] is not None):
+            if self.is3d:
+                output['source_label'] = F.one_hot(output['source_label'][0], self.max_label_index+1).permute(3, 0, 1, 2).float()[1:]
+                output['target_label'] = F.one_hot(output['target_label'][0], self.max_label_index+1).permute(3, 0, 1, 2).float()[1:]
+            else:
+                output['source_label'] = F.one_hot(output['source_label'][0], self.max_label_index+1).permute(2, 0, 1).float()[1:]
+                output['target_label'] = F.one_hot(output['target_label'][0], self.max_label_index+1).permute(2, 0, 1).float()[1:]
+
         return output
 
 class OASISNeurite3D(OASISNeurite):

@@ -1,0 +1,46 @@
+## oasis is the dataset
+tag: oasis
+
+data:
+  data_root: data/neurite-oasis
+  seed: 1234
+  batch_size: 1
+  num_workers: 1
+
+model:
+  # unet params
+  f_maps: [32, 32, 64]
+  out_channels: 32
+  levels: [2]   
+  skip: True
+  
+  # attention params
+  num_queries: 100
+  num_att_features: 32
+  w_mode: 'attention'
+  resume_path: null
+
+affine_sampler:
+  rot_range: 90
+  scale_range: [0.8, 1.2]
+  shear_range: 15
+  translation_range: 0.1
+
+train:
+  mode: 'pretrain'    # pretrain or finetune or eval
+  pretrain:
+    lr: 3e-4
+    weight_decay: 0.0 #1e-3
+    num_epochs: 2000
+    keep_p: 0.25
+    save_every: 10
+    keypoint_spread_loss_lambda: 0.1
+  finetune:
+    lr: 1e-4
+    weight_decay: 0.0 #1e-3
+    num_epochs: 2000
+    ema_decay: 0.999
+    jacdetlambda: 0.01
+    
+
+exp_dir: results/neural_prior/oasis

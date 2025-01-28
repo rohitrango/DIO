@@ -10,13 +10,23 @@ from torch.nn import functional as F
 from typing import List, Tuple, Optional, Union, Callable
 from solver.losses import _get_loss_function_factory
 from solver.utils import v2img_2d, v2img_3d, img2v_2d, img2v_3d, separable_filtering, ItemOrList
-try:
+from solver.affine import run_affine_transform_3d
+from packaging import version
+import logging
+from logging import getLogger
+logging.basicConfig(level=logging.INFO)
+
+logger = getLogger(__name__)
+logger.info("Using torch version %s", torch.__version__)
+
+if version.parse(torch.__version__) <= version.parse('1.9.0'):
     print("Loading py19")
     from cuda_gridsample_grad2_py19.cuda_gridsample import grid_sample_3d, grid_sample_2d
     print("Loaded for py19 version")
-except:
+else:
     print("Loading py19+")
     from cuda_gridsample_grad2.cuda_gridsample import grid_sample_3d, grid_sample_2d
+
 import numpy as np
 
 ALIGN_CORNERS = False
@@ -229,7 +239,6 @@ def multi_scale_diffeomorphic_solver(
     else:
         return all_warps, jacobian_norm
 
-
 def multi_scale_warp_solver(
         fixed_features: List[torch.Tensor],
         moving_features: List[torch.Tensor],
@@ -249,7 +258,8 @@ def multi_scale_warp_solver(
         phantom_step: str = 'adam',   # choices = sgd, adam
         convergence_tol: int = 4,       # if loss increases for "C" iterations, abort
         convergence_eps: float = 1e-3,
-        cfg: Optional[dict] = None
+        cfg: Optional[dict] = None,
+        init_affine: Optional[torch.Tensor] = None,
 ):
     '''
     Implements multi-scale SGD for warp fields with arbitrary feature images
@@ -272,13 +282,18 @@ def multi_scale_warp_solver(
     grid_sample_fn = grid_sample_2d if n_dims == 2 else grid_sample_3d
     losses = []
     # iterate over scales
-    # level is the level of iteration in the pyramid
-    # max_levels = len(fixed_features) - 1
+    # level is the level of iteration in the pyramid, i.e. max_levels = len(fixed_features) - 1
+
     for level, (iter_scale, (fixed_feature, moving_feature)) in enumerate(zip(iterations, zip(fixed_features, moving_features))):
         losses_lvl = []
-        # run optimization for this scale
-        # half_res = 1.0/(max(fixed_feature.shape[2:]) - 1) 
-        grid = F.affine_grid(torch.eye(n_dims, n_dims+1, device=fixed_feature.device).unsqueeze(0).repeat(batch_size, 1, 1), fixed_feature.shape, align_corners=align_corners)
+        # initialize affine transform
+        # this will typically have a gradient w.r.t. the affine parameters
+        if init_affine is not None:
+            pass
+        else:
+            init_affine = torch.eye(n_dims, n_dims+1, device=fixed_feature.device).unsqueeze(0).repeat(batch_size, 1, 1)
+        # initialize grid
+        grid = F.affine_grid(init_affine, fixed_feature.shape, align_corners=align_corners)
         # run optimization without grad
         warp.requires_grad_(True)
         exp_avg = exp_avg.detach()
@@ -341,7 +356,7 @@ def multi_scale_warp_solver(
                 global_step += 1
 
         # final step to capture gradient (here, warp = warp*)
-        # warp.requires_grad_(Fals)
+        # warp.requires_grad_(False)
         jacobian_norm = torch.tensor(0).to(warp.device).float()
         if hessian_type == 'jfb':
             ### JFB: Jacobian-free backprop - essentially pretend to perform one-step optimization
@@ -421,65 +436,29 @@ def multi_scale_warp_solver(
         return all_warps, jacobian_norm
 
 
-def multi_scale_affine2d_solver(fixed_features, moving_features, iterations, loss_function, init_affine=None, debug=True, **kwargs):
-    init_affine = None
-    warps = []
-    losses = []
-    num_levels = list(range(len(fixed_features)))
-    for i in num_levels:
-        fixed = fixed_features[i]
-        moving = moving_features[i]
-        iters = iterations[i]
-        affine, loss = single_scale_affine2d_solver(fixed, moving, iters, loss_function, init_affine, debug, **kwargs)
-        warp = F.affine_grid(affine, fixed.shape, align_corners=align_corners)
-        warps.append(warp)
-        losses.append(loss)
-        init_affine = affine
-    if debug:
-        return warps, losses
-    else:
-        return warps
+def multi_scale_affine3d_and_freeform_solver(
+        fixed_features: List[torch.Tensor],
+        moving_features: List[torch.Tensor],
+        iterations: List[int],
+        loss_function: Union[nn.Module, Callable],
+        gaussian_warp: Optional[ItemOrList[torch.Tensor]] = None,
+        gaussian_grad: Optional[ItemOrList[torch.Tensor]] = None,
+        learning_rate: float = 3e-3,
+        debug: bool = False,
+        phantom_step: str = 'sgd',
+        n_phantom_steps: int = 3,
+        convergence_eps: float = 1e-3,
+        hessian_type: str = 'jfb',
+        cfg: Optional[dict] = None
+):
+    ''' we have routines for multi-scale affine3d and freeform solvers, just stitch them '''
+    logger.info("Using multi-scale affine3d and freeform solver")
+    affine_map = None
+    for level, (iter_scale, (fixed_feature, moving_feature)) in enumerate(zip(iterations, zip(fixed_features, moving_features))):
+        affine_map = run_affine_transform_3d(fixed_feature, moving_feature, iter_scale, init_affine=affine_map, lr=learning_rate)
 
-def single_scale_affine2d_solver(fixed_features, moving_features, iterations, loss_function, init_affine=None, debug=True, **kwargs):
-    ''' initialize affine transform and run optimization 
-    fixed_features, moving_features: [B, C, H, W]
-    iterations: int
-    '''
-    # actually single scale here
-    # fixed_features, moving_features = fixed_features[0], moving_features[0]
-    #  get batch size and initialize affine
-    batch_size = fixed_features.shape[0]
-    if init_affine is not None:
-        affine_map = init_affine.clone().detach().requires_grad_(True)
-    else:
-        affine_map = torch.eye(2, 3)[None].cuda().repeat(batch_size, 1, 1)  # [B, 2, 3]
-        affine_map = affine_map.requires_grad_(True)
-    losses_opt = []
-    # define function
-    def f(affine_map, lr=0.1, log=False):
-        ''' affine_map: [B, 2, 3] '''
-        with torch.set_grad_enabled(True):
-            grid = F.affine_grid(affine_map, fixed_features.shape, align_corners=align_corners)
-            # moved_features = F.grid_sample(moving_features, grid, align_corners=align_corners)
-            moved_features = grid_sample_2d(moving_features, grid, align_corners=align_corners)
-            loss = loss_function(moved_features, fixed_features)
-            if log:
-                losses_opt.append(loss.item())
-            affine_grad = torch.autograd.grad(loss, affine_map, create_graph=True)[0]
-            # SGD update
-            affine_map = affine_map - lr * affine_grad
-        return affine_map
-    
-    # forward pass
-    with torch.no_grad():
-        for it in range(iterations):
-            affine_map = f(affine_map, log=True)
-    # attach ift hook
-    affine_map = affine_map.clone().detach().requires_grad_(True)
-    for i in range(3):
-        affine_map = f(affine_map, log=False)
-    # affine_map = IFTGrad.apply(f, affine_map)
-    ### get affine map to displacement map
-    # displacement_map = F.affine_grid(affine_map, fixed_features.shape, align_corners=align_corners)
-    # return displacement_map, losses_opt
-    return affine_map, losses_opt
+    # we have completed the affine transform (which stitches back gradients for multiscale), now run freeform
+    ret = multi_scale_warp_solver(fixed_features, moving_features, iterations=iterations,
+                                   loss_function=loss_function, hessian_type=hessian_type, gaussian_warp=gaussian_warp, gaussian_grad=gaussian_grad, learning_rate=learning_rate, debug=debug, 
+                                    phantom_step=phantom_step, n_phantom_steps=n_phantom_steps, convergence_eps=convergence_eps, cfg=cfg, init_affine=affine_map)
+    return ret

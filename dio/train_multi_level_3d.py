@@ -11,7 +11,7 @@ from models.TransMorph import TransFeX
 from models.unet3d import UNet2D, UNet3D, UNetEncoder3D
 from models.lku import LKUNet, LKUEncoder
 from models.configs_TransMorph import get_3DTransFeX_config
-from solver.adam import multi_scale_warp_solver, multi_scale_diffeomorphic_solver, multi_scale_affine2d_solver
+from solver.adam import multi_scale_warp_solver, multi_scale_diffeomorphic_solver, multi_scale_affine3d_and_freeform_solver
 from solver.utils import gaussian_1d, img2v_3d, v2img_3d, separable_filtering
 from solver.losses import NCC_vxm, DiceLossWithLongLabels, _get_loss_function_factory
 from solver.losses import LocalNormalizedCrossCorrelationLoss
@@ -22,6 +22,7 @@ import hydra
 from model_utils import displacements_to_warps, downsample
 from utils import set_seed, init_wandb, open_log, cleanup
 from datasets.oasis import OASIS, OASISNeurite3D
+from datasets.abdomen import AbdomenMRCT
 import numpy as np
 from scipy.ndimage import zoom
 # torch.set_num_threads(1)
@@ -40,6 +41,7 @@ from solver.adam import ALIGN_CORNERS as align_corners
 datasets = {
     'oasis': OASIS,
     'neurite-oasis': OASISNeurite3D,
+    'abdomen-MRCT': AbdomenMRCT,
 }
 
 def resolve_layer_idx(epoch, cfg):
@@ -108,7 +110,7 @@ def main(rank, cfg, world_size=1):
     else:
         input_channels = 1
 
-    init_wandb(cfg, 'TransFeX', rank)
+    init_wandb(cfg, 'DEQReg', rank)
     set_seed(cfg.seed)
     print, fp = open_log(cfg, rank) 
 
@@ -163,7 +165,6 @@ def main(rank, cfg, world_size=1):
         model.init_zero_features()
 
     optim = torch.optim.Adam(model.parameters(), lr=cfg.train.lr, amsgrad=cfg.model.name == 'transmorph')
-    # scheduler = torch.optim.lr_scheduler.PolynomialLR(optim, cfg.train.epochs, power=cfg.train.lr_power_decay)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lr_lambda=lambda epoch: (1 - epoch/cfg.train.epochs)**cfg.train.lr_power_decay)
     start_epoch = 0
     best_dice_loss = np.inf
@@ -208,8 +209,8 @@ def main(rank, cfg, world_size=1):
         diffopt_solver = multi_scale_diffeomorphic_solver
     elif cfg.diffopt.warp_type == 'freeform':
         diffopt_solver = multi_scale_warp_solver
-    elif cfg.diffopt.warp_type == 'affine':
-        diffopt_solver = multi_scale_affine2d_solver
+    elif cfg.diffopt.warp_type == 'affine_and_freeform':
+        diffopt_solver = multi_scale_affine3d_and_freeform_solver
     else:
         raise ValueError(f"Unknown solver: {cfg.diffopt.solver}")
     
@@ -306,13 +307,6 @@ def main(rank, cfg, world_size=1):
             
             if cfg.loss.train_last_warp_only:
                 displacements = displacements[-1:]
-            # print(len(displacements))
-            # Clip warp gradients if specified
-            # if cfg.diffopt.clip_warp_grad_per < 100:
-            #     for i, (disp, loss) in enumerate(zip(displacements, losses_opt)):
-            #         # convergence did not happen for this level, clip gradients
-            #         if len(losses_opt) < iterations[i] + 3:
-            #             disp.register_hook(lambda grad: clip_grad_2d(grad, cfg.diffopt.clip_warp_grad_per))
 
             # For diffeomorphic or freeform, the displacements need to be converted to warps, for affine its already the warp
             if cfg.diffopt.warp_type in ['affine']:
@@ -325,10 +319,9 @@ def main(rank, cfg, world_size=1):
                 'dice': [],
                 'center': [],
             }
+
             ## Upscale all warps and compute losses
-            # gaussian_grad_back = gaussian_1d(torch.tensor(1), truncated=2).cuda() 
             for i in range(len(warps)):
-                # warps[i].register_hook(lambda grad: v2img_2d(separable_filtering(img2v_2d(grad), gaussian_grad_back)))
                 if cfg.loss.downsampled_warps:
                     ## we will downsample the fixed image and fixed label, and compute the ncc and dice losses 
                     # this is not the original scale
@@ -367,7 +360,8 @@ def main(rank, cfg, world_size=1):
                         warp = img2v_3d(F.upsample(v2img_3d(warps[i]), size=fixed_img.shape[2:], mode='trilinear', align_corners=align_corners))
                     loss_dice = dice_loss_fn(moving_label, fixed_label, warp)
                 
-                # From the dice loss function, get the center values 
+                ## this loss is to pull the label centers together if the starting dice value is low and a threshold is specified
+                # From the dice loss function, get the center values  
                 center_dists = dice_loss_fn.center_dist
                 center_dice_scores = dice_loss_fn.center_dice_scores
                 loss_center = torch.tensor(0.0, device=fixed_img.device)
@@ -484,12 +478,7 @@ def main(rank, cfg, world_size=1):
 
         if ddp:
             dist.barrier()
-        # delete intermediates and make space for validation and next epoch
-        # for f in fixed_features:
-        #     del f
-        # for m in moving_features:
-        #     del m 
-        # torch.cuda.empty_cache()
+
         ## validation loop
         model.eval()
         losses_ncc, losses_dice = [], []
@@ -588,16 +577,6 @@ def main(rank, cfg, world_size=1):
                 # print(losses_ncc[0], losses_ncc[-1])
                 # print(losses_dice[0], losses_dice[-1])
                 # print(len(losses_ncc), len(losses_dice))
-            # gather
-            # losses_ncc = torch.tensor(losses_ncc).cuda()
-            # losses_dice = torch.tensor(losses_dice).cuda()
-            # losses_dice_region = torch.tensor(losses_dice_region).cuda()
-            # dist.all_reduce(losses_ncc, op=dist.ReduceOp.SUM)
-            # dist.all_reduce(losses_dice, op=dist.ReduceOp.SUM)
-            # dist.all_reduce(losses_dice_region, op=dist.ReduceOp.SUM)
-            # losses_ncc = losses_ncc.cpu().numpy()
-            # losses_dice = losses_dice.cpu().numpy()
-            # losses_dice_region = losses_dice_region.cpu().numpy()
 
         # log validation statistics
         if cfg.deploy and cfg.log_wandb and isrankzero:
@@ -655,9 +634,4 @@ def main(rank, cfg, world_size=1):
     
 
 if __name__ == '__main__':
-    # try:
     mainfunc()
-    # except:
-    #     sys.stdout = sys.__stdout__
-    #     sys.stderr = sys.__stderr__
-        # wandb.finish()
