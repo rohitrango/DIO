@@ -129,11 +129,13 @@ class LKUNet(nn.Module):
                 bias=False, batchnorm=False):
         if batchnorm:
             layer = nn.Sequential(
+                nn.InstanceNorm3d(out_channels),
                 nn.Conv3d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias),
-                nn.InstanceNorm3d(out_channels))
                 # nn.Tanh())
+            )
         else:
             layer = nn.Sequential(
+                nn.InstanceNorm3d(out_channels),
                 nn.Conv3d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias),
             )
                 # nn.Softsign())

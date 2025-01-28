@@ -775,7 +775,6 @@ class AbstractUNet(nn.Module):
                  num_groups=8, num_levels=4, is_segmentation=False, conv_kernel_size=3, pool_kernel_size=2, levels=None,
                  conv_padding=1, conv_upscale=2, upsample='trilinear', dropout_prob=0.1, is3d=True):
         super(AbstractUNet, self).__init__()
-
         if isinstance(f_maps, int):
             f_maps = number_of_features_per_level(f_maps, num_levels=num_levels)
         else:
@@ -849,12 +848,14 @@ class AbstractUNet(nn.Module):
         is_relu = 'r' in self.layer_order
         # iterate through all conv layers
         for param, mod in self.named_modules():
+            print(param)
             if isinstance(mod, nn.Conv3d) or isinstance(mod, nn.Conv2d):
                 # init weights
-                nn.init.kaiming_normal_(mod.weight, a=None, mode='fan_out', nonlinearity='relu' if is_relu else 'leaky_relu')
+                nn.init.kaiming_uniform_(mod.weight, a=None, mode='fan_in', nonlinearity='relu' if is_relu else 'leaky_relu')
+                # nn.init.kaiming_normal_(mod.weight, a=None, mode='fan_out', nonlinearity='relu' if is_relu else 'leaky_relu')
                 # init bias
-                # if mod.bias is not None:
-                #     nn.init.constant_(mod.bias, 0)
+                if mod.bias is not None:
+                    nn.init.constant_(mod.bias, 0)
 
     def init_zero_features(self):
         ''' init weights of all convs to zero '''

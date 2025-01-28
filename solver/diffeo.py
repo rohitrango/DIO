@@ -1,7 +1,7 @@
 '''
 author: rohitrango
 
-Implements multi-scale diffeomorphic riemannian adam
+Implements multi-scale diffeomorphic riemannian adam / sgd
 '''
 import math
 import torch
@@ -255,7 +255,7 @@ def multi_scale_warp_solver(
         eps: float = 1e-8,
         n_phantom_steps: int = 3,
         return_jacobian_norm: int = 1,  # how many estimators to compute
-        phantom_step: str = 'adam',   # choices = sgd, adam
+        phantom_step: str = 'sgd',   # choices = sgd, adam
         convergence_tol: int = 4,       # if loss increases for "C" iterations, abort
         convergence_eps: float = 1e-3,
         cfg: Optional[dict] = None,
@@ -452,13 +452,43 @@ def multi_scale_affine3d_and_freeform_solver(
         cfg: Optional[dict] = None
 ):
     ''' we have routines for multi-scale affine3d and freeform solvers, just stitch them '''
-    logger.info("Using multi-scale affine3d and freeform solver")
+    logger.warn("Using multi-scale affine3d and freeform solver")
     affine_map = None
     for level, (iter_scale, (fixed_feature, moving_feature)) in enumerate(zip(iterations, zip(fixed_features, moving_features))):
-        affine_map = run_affine_transform_3d(fixed_feature, moving_feature, iter_scale, init_affine=affine_map, lr=learning_rate)
+        affine_map, _ = run_affine_transform_3d(fixed_feature, moving_feature, iter_scale, init_affine=affine_map, lr=learning_rate)
+        print(affine_map)
 
     # we have completed the affine transform (which stitches back gradients for multiscale), now run freeform
+    logger.warn("Running freeform solver")
     ret = multi_scale_warp_solver(fixed_features, moving_features, iterations=iterations,
                                    loss_function=loss_function, hessian_type=hessian_type, gaussian_warp=gaussian_warp, gaussian_grad=gaussian_grad, learning_rate=learning_rate, debug=debug, 
                                     phantom_step=phantom_step, n_phantom_steps=n_phantom_steps, convergence_eps=convergence_eps, cfg=cfg, init_affine=affine_map)
     return ret
+
+def multi_scale_affine3d_solver(
+        fixed_features: List[torch.Tensor],
+        moving_features: List[torch.Tensor],
+        iterations: List[int],
+        loss_function: Union[nn.Module, Callable],
+        gaussian_warp: Optional[ItemOrList[torch.Tensor]] = None,
+        gaussian_grad: Optional[ItemOrList[torch.Tensor]] = None,
+        learning_rate: float = 3e-3,
+        debug: bool = False,
+        phantom_step: str = 'sgd',
+        n_phantom_steps: int = 3,
+        convergence_eps: float = 1e-3,
+        hessian_type: str = 'jfb',
+        cfg: Optional[dict] = None
+):
+    ''' we have routines for multi-scale affine3d and freeform solvers, just stitch them '''
+    logger.warn("Using multi-scale affine3d and freeform solver")
+    affine_map = None
+    displacements = []
+    losses_opt = []
+    for level, (iter_scale, (fixed_feature, moving_feature)) in enumerate(zip(iterations, zip(fixed_features, moving_features))):
+        affine_map, losses_opt_lvl = run_affine_transform_3d(fixed_feature, moving_feature, iter_scale, init_affine=affine_map, lr=learning_rate)
+        print(affine_map)
+        displacements.append(F.affine_grid(affine_map, fixed_feature.shape, align_corners=True))
+        losses_opt.append(losses_opt_lvl)
+
+    return displacements, losses_opt, 0

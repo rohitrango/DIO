@@ -52,7 +52,6 @@ def load_pair(image, label, isotropic, crop):
 
     return img, label
 
-
 class KleinDatasets(Dataset):
     def __init__(self, data_root="/data/rohitrango/brain_data/", dataset="IBSR18", isotropic=True, crop=False, dry_run=False, dry_run_size=5):
         super().__init__()

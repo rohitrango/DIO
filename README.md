@@ -1,6 +1,6 @@
 # Deep Implicit Optimization for Robust and Flexible Image Registration
 
-<a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg"></a> [![arXiv](https://img.shields.io/badge/arXiv-2406.07361-b31b1b.svg)](https://arxiv.org/abs/2406.07361)   
+<a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg"></a> [![arXiv](https://img.shields.io/badge/arXiv-2111.10480-b31b1b.svg)](https://arxiv.org/abs/2111.10480)
 
 keywords: image registration, optimization
 
@@ -10,3 +10,15 @@ This is a **PyTorch** implementation of our paper:
 
 More coming soon.
 
+
+## Installation instructions
+
+Run the commands as 
+
+```PYTHONPATH=./ python ... ```
+
+## Abdomen
+
+```python
+PYTHONPATH=./ python scripts/dio/train_multi_level_3d.py --config-name abdomen-mrct-3d exp_name=abdomen_trial deploy=False
+```

@@ -4,14 +4,13 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) 
 # make sure the parent of this folder is in path to be 
 # able to access everything
 from models.TransMorph import TransFeX
 from models.unet3d import UNet2D, UNet3D, UNetEncoder3D
 from models.lku import LKUNet, LKUEncoder
 from models.configs_TransMorph import get_3DTransFeX_config
-from solver.adam import multi_scale_warp_solver, multi_scale_diffeomorphic_solver, multi_scale_affine3d_and_freeform_solver
+from solver.diffeo import multi_scale_warp_solver, multi_scale_diffeomorphic_solver, multi_scale_affine3d_and_freeform_solver, multi_scale_affine3d_solver
 from solver.utils import gaussian_1d, img2v_3d, v2img_3d, separable_filtering
 from solver.losses import NCC_vxm, DiceLossWithLongLabels, _get_loss_function_factory
 from solver.losses import LocalNormalizedCrossCorrelationLoss
@@ -36,7 +35,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 
 # this is a global setting to stay compatible with scipy's grid sampling
-from solver.adam import ALIGN_CORNERS as align_corners
+from solver.diffeo import ALIGN_CORNERS as align_corners
 
 datasets = {
     'oasis': OASIS,
@@ -82,7 +81,7 @@ def setup_ddp(rank, world_size, port=12355):
 def cleanup_ddp():
     dist.destroy_process_group()
 
-@hydra.main(config_path='./configs', config_name='default')
+@hydra.main(config_path='../../configs/dio/', config_name='oasis_ml_freeform_d4_3D')
 def mainfunc(cfg):
     # get ddp if specified
     if not cfg.ddp.enabled:
@@ -164,7 +163,7 @@ def main(rank, cfg, world_size=1):
         print("Initializing zero features for the model...")
         model.init_zero_features()
 
-    optim = torch.optim.Adam(model.parameters(), lr=cfg.train.lr, amsgrad=cfg.model.name == 'transmorph')
+    optim = torch.optim.AdamW(model.parameters(), lr=cfg.train.lr, amsgrad=cfg.model.name == 'transmorph')
     scheduler = torch.optim.lr_scheduler.LambdaLR(optim, lr_lambda=lambda epoch: (1 - epoch/cfg.train.epochs)**cfg.train.lr_power_decay)
     start_epoch = 0
     best_dice_loss = np.inf
@@ -209,6 +208,8 @@ def main(rank, cfg, world_size=1):
         diffopt_solver = multi_scale_diffeomorphic_solver
     elif cfg.diffopt.warp_type == 'freeform':
         diffopt_solver = multi_scale_warp_solver
+    elif cfg.diffopt.warp_type == 'affine':
+        diffopt_solver = multi_scale_affine3d_solver
     elif cfg.diffopt.warp_type == 'affine_and_freeform':
         diffopt_solver = multi_scale_affine3d_and_freeform_solver
     else:
@@ -290,7 +291,7 @@ def main(rank, cfg, world_size=1):
 
             # # retain grad of the feature images for debugging
             if not cfg.deploy:
-                if it == 2:
+                if it == 20:
                     break
                 try_retaingrad(fixed_features)
                 try_retaingrad(moving_features)  
@@ -300,7 +301,7 @@ def main(rank, cfg, world_size=1):
             displacements, losses_opt, jacnorm = diffopt_solver(fixed_features, moving_features,
                                 iterations=iterations, loss_function=feature_loss_fn, 
                                 phantom_step=cfg.diffopt.phantom_step, n_phantom_steps=cfg.diffopt.n_phantom_steps,
-                                debug=True, convergence_eps=cfg.diffopt.convergence_eps,
+                                debug=True, convergence_eps=cfg.diffopt.convergence_eps, learning_rate=cfg.diffopt.learning_rate,
                                 gaussian_grad=gaussian_grad, gaussian_warp=gaussian_warp)
             if not cfg.deploy:
                 print([len(x) for x in losses_opt])
@@ -397,6 +398,13 @@ def main(rank, cfg, world_size=1):
                 loss = loss + ((cfg.loss.decay_mse**epoch) * 0.5 * loss_mse / len(moving_decoded_features))
             # all 3 losses are added up now
             loss.backward()
+            # gradient clipping
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)
+            for name, param in model.named_parameters():
+                if param.grad is not None:
+                    param.grad = param.grad * 1e5
+            #         print(name, param.grad.norm().item())
+
             # change things to log
             # print details (or to log)
             print("Epoch: {}, Iter: {}, NCC: {}, Diceloss: {}, centerloss: {}, MSE: {:06f}, mse_lambda: {:06f}, lr: {:06f}, diffopt_iters: {}".format(
@@ -404,8 +412,8 @@ def main(rank, cfg, world_size=1):
                                                             loss_mse.item(), (cfg.loss.decay_mse**epoch) , scheduler.get_last_lr()[0], iterations))
             # print the gradient values of the fixed and moving images for debugging
             if not cfg.deploy:
-                norm_fixed_grad = torch.log10(fixed_features[-1].grad.norm()).item() if fixed_features[0].grad is not None else 0
-                norm_mov_grad = torch.log10(moving_features[-1].grad.norm()).item() if moving_features[0].grad is not None else 0
+                norm_fixed_grad = torch.log10(1e-6+fixed_features[-1].grad.norm()).item() if fixed_features[0].grad is not None else 0
+                norm_mov_grad = torch.log10(1e-6+moving_features[-1].grad.norm()).item() if moving_features[0].grad is not None else 0
                 print("Fixed features grad norm: %.7f, Moving features grad norm: %.7f" % (norm_fixed_grad, norm_mov_grad))
 
             optim.step()
@@ -490,6 +498,8 @@ def main(rank, cfg, world_size=1):
                 #     break
                 if not cfg.deploy:
                     print(it, len(val_dataloader))
+                    if it > 10:
+                        break
                 # Sample 2D slices out of the volumes
                 B, C, H, W, D = batch['source_img'].shape
                 fixed_img, moving_img = batch['source_img'].cuda(), batch['target_img'].cuda()
@@ -595,8 +605,8 @@ def main(rank, cfg, world_size=1):
         if isrankzero:
             print("------ Validation Scores ------")
             print("Epoch: {}".format(epoch))
-            print("Mean dice: {:.6f}".format(np.mean(losses_dice)))
-            print("Mean ncc: {:.6f}".format(np.mean(losses_ncc)))
+            print("Mean dice loss: {:.6f}".format(np.mean(losses_dice)))
+            print("Mean ncc loss: {:.6f}".format(np.mean(losses_ncc)))
             print()
 
         # scheduler step

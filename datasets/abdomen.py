@@ -16,6 +16,18 @@ import json
 import itertools
 from scipy.ndimage import affine_transform
 
+def get_multimodal_pairs(images):
+    ''' get pairs of images that are of different modalities '''
+    pairs = []
+    for i in range(len(images)):
+        for j in range(i+1, len(images)):
+            is_ct_i = is_ct_image(images[i])
+            is_ct_j = is_ct_image(images[j])
+            if is_ct_i != is_ct_j:
+                pairs.append((i, j))
+                pairs.append((j, i))
+    return pairs
+
 def is_ct_image(image):
     return '0001.nii.gz' in image
 
@@ -57,17 +69,16 @@ class AbdomenMRCT(Dataset):
         with open(osp.join(data_root, 'AbdomenMRCT_dataset.json'), 'r') as f:
             metadata = json.load(f)
 
+        N = 5
         if split == 'train':
-            self.images = images0[:-10] + images1[:-10]
-            self.labels = labels0[:-10] + labels1[:-10]
-            self.pairs = list(itertools.combinations(range(len(self.images)), 2))
-            self.pairs = self.pairs + [(y, x) for x, y in self.pairs]
+            self.images = images0[:-N] + images1[:-N]
+            self.labels = labels0[:-N] + labels1[:-N]
+            self.pairs = get_multimodal_pairs(self.images)
 
         elif split == 'val':
-            self.images = images0[-10:] + images1[-10:]
-            self.labels = labels0[-10:] + labels1[-10:]
-            self.pairs = list(itertools.combinations(range(len(self.images)), 2))
-            self.pairs = self.pairs + [(y, x) for x, y in self.pairs]
+            self.images = images0[-N:] + images1[-N:]
+            self.labels = labels0[-N:] + labels1[-N:]
+            self.pairs = get_multimodal_pairs(self.images)
 
         elif split == 'test':
             pairs = []

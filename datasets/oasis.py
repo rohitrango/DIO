@@ -146,8 +146,9 @@ class OASISNeurite(Dataset):
         self.one_hot = one_hot
         self.normalize = normalize
         if split != 'test':
+            seg = "24" if not seg4 else "4"
             self.images = sorted(glob(osp.join(data_root, 'OASIS*MR1', 'aligned_norm.nii.gz' if is3d else 'slice_norm.nii.gz')))
-            self.labels = sorted(glob(osp.join(data_root, 'OASIS*MR1', 'aligned_seg35.nii.gz' if is3d else 'slice_seg24.nii.gz')))
+            self.labels = sorted(glob(osp.join(data_root, 'OASIS*MR1', 'aligned_seg35.nii.gz' if is3d else f'slice_seg{seg}.nii.gz')))
             if split == 'train':
                 self.images = self.images[:-20]
                 self.labels = self.labels[:-20]

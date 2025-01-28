@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from models.TransMorph import TransFeX
 from models.unet3d import UNet2D, UNet3D
 from models.configs_TransMorph import get_3DTransFeX_config
-from solver.adam import multi_scale_warp_solver, multi_scale_diffeomorphic_solver, multi_scale_affine2d_solver
+from solver.diffeo import multi_scale_warp_solver, multi_scale_diffeomorphic_solver, multi_scale_affine2d_solver
 from solver.utils import gaussian_1d, img2v_3d, v2img_3d, separable_filtering
 from solver.losses import NCC_vxm, DiceLossWithLongLabels, _get_loss_function_factory
 from solver.losses import LocalNormalizedCrossCorrelationLoss
@@ -39,11 +39,8 @@ from kleindataloader import KleinDatasets
 
 from train_multi_level_3d import resolve_layer_idx, try_retaingrad, torch2wandbimg, count_parameters
 
-@hydra.main(config_path='./configs', config_name='default')
+@hydra.main(config_path='./configs/dio/', config_name='default')
 def mainfunc(cfg):
-    # for dataset_name in ['IBSR18']:
-        # for isotropic in [True, False]:
-        #     for crop in [True, False]:
     for dataset_name in ['IBSR18', 'CUMC12', 'MGH10', 'LPBA40']:
         for isotropic in [True, False]:
             for crop in [True, False]:

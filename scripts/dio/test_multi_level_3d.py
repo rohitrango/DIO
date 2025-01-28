@@ -4,7 +4,6 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))) 
 # make sure the parent of this folder is in path to be 
 # able to access everything
 from models.TransMorph import TransFeX
@@ -65,7 +64,7 @@ def compute_detJac(warp):
     return det[...,1:-1, 1:-1, 1:-1]
 
 
-@hydra.main(config_path='./configs', config_name='default')
+@hydra.main(config_path='../configs/dio', config_name='oasis_ml_freeform_d4_3D')
 def main(cfg):
     # init setup
     # init_wandb(cfg, project_name='TransFeX')

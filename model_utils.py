@@ -4,6 +4,21 @@ from torch import nn
 from torch.nn import functional as F
 from typing import List, Optional
 from solver.losses import ItemOrList, gaussian_1d, separable_filtering
+import copy
+
+def interpolate_warp(warp: torch.Tensor, size: List[int]):
+    ''' function to interpolate a warp '''
+    dims = len(warp.shape) - 2
+    if dims == 2:
+        B, H, W, _ = warp.shape
+        warpimg = F.interpolate(warp.permute(0, 3, 1, 2), size=size, mode='bilinear', align_corners=True)
+        return warpimg.permute(0, 2, 3, 1)
+    elif dims == 3:
+        B, H, W, D, _ = warp.shape
+        warpimg = F.interpolate(warp.permute(0, 4, 1, 2, 3), size=size, mode='trilinear', align_corners=True)
+        return warpimg.permute(0, 2, 3, 4, 1)
+    else:
+        raise NotImplementedError
 
 def displacements_to_warps(displacements):
     ''' given a list of displacements, add warps to them '''

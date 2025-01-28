@@ -15,7 +15,7 @@ diffopt:
 
 dataset:
   name: oasis
-  data_root: ../data/oasis
+  data_root: ./data/oasis
 
 batch_size: 16
 num_workers: 4

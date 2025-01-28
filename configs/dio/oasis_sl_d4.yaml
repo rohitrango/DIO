@@ -17,6 +17,7 @@ train:
   lr: 1e-4
   backprop_both: False   # do we want to backprop through both the fixed and moving features
   lr_power_decay: 0.7   # polynomial power decay for learning rate
+  feature_grad_norm: -1
 
 loss:
   weight_dice: 1.0
@@ -34,7 +35,7 @@ diffopt:
 
 dataset:
   name: oasis
-  data_root: ../data/oasis
+  data_root: ./data/oasis
 
 batch_size: 1
 num_workers: 0

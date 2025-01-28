@@ -73,7 +73,7 @@ def run_affine_transform_2d(fixed_features, moving_features, iterations, init_af
     # affine_map = IFTGrad.apply(f, affine_map)
     return affine_map, losses_opt
 
-def run_affine_transform_3d(fixed_features, moving_features, iterations, init_affine=None, debug=True, lr=0.1):
+def run_affine_transform_3d(fixed_features, moving_features, iterations, init_affine=None, debug=True, lr=0.1, phantom_steps=1):
     ''' initialize affine transform and run optimization 
     fixed_features, moving_features: [B, C, H, W, D]
     iterations: int
@@ -106,7 +106,7 @@ def run_affine_transform_3d(fixed_features, moving_features, iterations, init_af
             affine_map = f(affine_map, log=True)
     # attach ift hook
     # affine_map = affine_map.clone().detach().requires_grad_(True)
-    for i in range(1):
+    for i in range(phantom_steps):
         affine_map = f(affine_map, log=False)
     return affine_map, losses_opt
 

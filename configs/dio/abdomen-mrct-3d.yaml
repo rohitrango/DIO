@@ -16,24 +16,25 @@ dataset:
 deploy: True
 
 model:
-  f_maps: [16, 16, 32, 32, 64]
-  name: unet
+  f_maps: [16, 16, 32, 64, 64]
+  name: lku
   combine: False    # combine fixed and moving into a single image
-  levels: [1, 2, 4]       # can be any order, it is sorted inside the network (processing is done from lowest to highest res though)
+  # levels: [1, 2, 4]       # can be any order, it is sorted inside the network (processing is done from lowest to highest res though)
+  levels: [1, 2, 4]
   output_channels: 32     # number of channels in feature extractor
   init_zero_features: False  # initialize the feature extractor with zeros
   skip: True
 
 train:
-  epochs: 1000
-  lr: 3e-4
-  train_new_level: [25, 150]    # list should be one less than the number of levels
+  epochs: 400
+  lr: 1e-4
+  train_new_level: [0, 10]    # list should be one less than the number of levels
   backprop_both: False   # do we want to backprop through both the fixed and moving features
   lr_power_decay: 0.9   # polynomial power decay for learning rate
   feature_grad_norm: -1
   image_noise_sigma: 0.0   # how much noise to add to NCC calculation
-  cc_smooth_nr: 1e-5       # `smooth_nr` term for numerator
-  cc_unsigned: False        # if set to True, will compute the unsigned NCC
+  cc_smooth_nr: 1e-8       # `smooth_nr` term for numerator
+  cc_unsigned: True        # if set to True, will compute the unsigned NCC
 
 loss:
   weight_dice: 1.0
@@ -45,22 +46,23 @@ loss:
   train_last_warp_only: False   # whether to train all layers or just last one
   img_loss: ncc
   dice_order: 2       # change default dice order to 2
-  weight_label_center: 0  # no center loss by default
-  center_dice_threshold: -1.0   # disable center loss
+  weight_label_center: 0.2  # no center loss by default
+  center_dice_threshold: 0.5  # disable center loss
   dice_l2_mode: False     # whether to use L2 distance for dice loss during training
 
 # parameters for diffeomorphic optimization
 diffopt: 
-  warp_type: 'affine_and_freeform'
+  # warp_type: 'affine_and_freeform'
+  warp_type: 'freeform'
   iterations: [200, 100, 50]  
-  sigma_warp: 0.5
-  sigma_grad: 1.0
+  sigma_warp: 0.0
+  sigma_grad: 0.5
   gradual: False
   feature_loss_fn: 'l2'
   phantom_step: sgd     
-  clip_warp_grad_per: 100
   n_phantom_steps: 1
-  convergence_eps: 1e-3 # change this
+  convergence_eps: 1e-4 # change this
+  learning_rate: 0.1
 
 batch_size: 1
 num_workers: 1
