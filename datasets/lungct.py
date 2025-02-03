@@ -16,7 +16,14 @@ from PIL import Image
 import json
 import itertools
 from scipy.ndimage import affine_transform
-from .abdomen import MINDSSC 
+try:
+    from datasets.abdomen import MINDSSC 
+except ImportError:
+    from abdomen import MINDSSC 
+try:
+    from solver.diffeo import ALIGN_CORNERS as align_corners
+except ImportError:
+    align_corners = False
 
 import pandas as pd
 
@@ -28,7 +35,44 @@ def to_torch_kps(kps, shape):
     kps = kps.astype(np.float32)
     size = np.array(shape, dtype=np.float32)[None]
     kps = (2*kps+1)/size - 1
-    return kps
+    return torch.from_numpy(kps).float()
+
+def get_affine_transform(seed=None, angle=np.pi/9, translation=0.1):
+    """Sample 3D affine augmentation 
+
+    Returns: 
+        3x4 affine matrix
+    """
+    # Set random seed if provided
+    if seed is not None:
+        rng = np.random.RandomState(seed)
+    else:
+        rng = np.random.RandomState()
+        
+    # Generate random scaling factors between 0.8 and 1.2
+    scales = rng.uniform(0.8, 1.2, size=3)
+    # Create random rotation angles
+    angles = rng.uniform(-angle, angle, size=3)  # ±30 degrees
+    # Create rotation matrices for each axis
+    Rx = np.array([[1, 0, 0],
+                    [0, np.cos(angles[0]), -np.sin(angles[0])],
+                    [0, np.sin(angles[0]), np.cos(angles[0])]])
+    
+    Ry = np.array([[np.cos(angles[1]), 0, np.sin(angles[1])],
+                    [0, 1, 0],
+                    [-np.sin(angles[1]), 0, np.cos(angles[1])]])
+    
+    Rz = np.array([[np.cos(angles[2]), -np.sin(angles[2]), 0],
+                    [np.sin(angles[2]), np.cos(angles[2]), 0],
+                    [0, 0, 1]])
+    
+    # Combine rotations and scaling
+    A = Rx @ Ry @ Rz @ np.diag(scales)
+    t = rng.uniform(-translation, translation, size=3)
+    # print(A, t, angles * 180 / np.pi)
+    affine = np.concatenate([A, t[:, None]], axis=1)
+    affine = np.concatenate([affine, np.array([[0, 0, 0, 1]])], axis=0)
+    return torch.from_numpy(affine).float()
 
 class LungCT(Dataset):
     ''' dataset that returns images and keypoints '''
@@ -108,13 +152,48 @@ class LungCT(Dataset):
         # convert to torch tensors and normalize
         f_kps = to_torch_kps(f_kps, f_image.shape[-3:]) + 0
         m_kps = to_torch_kps(m_kps, m_image.shape[-3:]) + 0
+
         # change the image to [ZYX] format from [XYZ]
         f_image = f_image.transpose(0, 3, 2, 1) + 0
         m_image = m_image.transpose(0, 3, 2, 1) + 0
+
+        # augment
+        # right now images are in [XYZ] format, and so are the keypoints
+        if self.split == 'train' and self.aug:
+            # random flip 
+            # if np.random.rand() < 0.25:
+            #     f_image, m_image = f_image[:, ::-1], m_image[:, ::-1]
+            #     f_kps[:, 2], m_kps[:, 2] = -f_kps[:, 2], -m_kps[:, 2]
+            # if np.random.rand() < 0.25:
+            #     f_image, m_image = f_image[:, :, ::-1], m_image[:, :, ::-1]
+            #     f_kps[:, 1], m_kps[:, 1] = -f_kps[:, 1], -m_kps[:, 1]
+            # if np.random.rand() < 0.25:
+            #     f_image, m_image = f_image[:, :, :, ::-1], m_image[:, :, :, ::-1]
+            #     f_kps[:, 0], m_kps[:, 0] = -f_kps[:, 0], -m_kps[:, 0]
+            
+            f_image = f_image + 0
+            m_image = m_image + 0
+
+            # # random rotation
+            if np.random.rand() < 0.5:
+                shape = [1, 1] + list(f_image.shape[-3:])
+                affine = get_affine_transform()
+                affineinv = torch.linalg.inv(affine)
+                # affineinv = affine
+                # print(affineinv.shape)
+                # affineinv = affine
+                grid = F.affine_grid(affineinv[:3][None], shape, align_corners=align_corners)
+                f_image = F.grid_sample(torch.from_numpy(f_image).float().unsqueeze(0), grid, align_corners=align_corners)[0].numpy()
+                m_image = F.grid_sample(torch.from_numpy(m_image).float().unsqueeze(0), grid, align_corners=align_corners)[0].numpy()
+                # print(affine)
+                # keypoints also move
+                f_kps = f_kps @ affine[:3, :3].T + affine[:3, 3][None]
+                m_kps = m_kps @ affine[:3, :3].T + affine[:3, 3][None]
+
         ret = {
             'source_img': torch.tensor(f_image, dtype=torch.float32),
             'target_img': torch.tensor(m_image, dtype=torch.float32),
-            'source_kps': torch.tensor(f_kps, dtype=torch.float32),
-            'target_kps': torch.tensor(m_kps, dtype=torch.float32),
+            'source_kps': f_kps,
+            'target_kps': m_kps,
         }
         return ret
