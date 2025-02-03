@@ -22,6 +22,7 @@ from model_utils import displacements_to_warps, downsample
 from utils import set_seed, init_wandb, open_log, cleanup
 from datasets.oasis import OASIS, OASISNeurite3D
 from datasets.abdomen import AbdomenMRCT
+from datasets.lungct import LungCT
 import numpy as np
 from scipy.ndimage import zoom
 # torch.set_num_threads(1)
@@ -33,6 +34,7 @@ import torch.multiprocessing as mp
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
+# mp.set_start_method('spawn')
 
 # this is a global setting to stay compatible with scipy's grid sampling
 from solver.diffeo import ALIGN_CORNERS as align_corners
@@ -41,6 +43,7 @@ datasets = {
     'oasis': OASIS,
     'neurite-oasis': OASISNeurite3D,
     'abdomen-MRCT': AbdomenMRCT,
+    'lungct': LungCT,
 }
 
 def resolve_layer_idx(epoch, cfg):
@@ -58,6 +61,12 @@ def try_retaingrad(tensors):
             tensor.retain_grad()
     except:
         pass
+
+def try_getgrad(tensors):
+    try:
+        return [tensor.grad for tensor in tensors]
+    except:
+        return [None for _ in tensors]
 
 def torch2wandbimg(tensor, mask_data=None):
     # convert to numpy and optionally mask
@@ -80,6 +89,27 @@ def setup_ddp(rank, world_size, port=12355):
 
 def cleanup_ddp():
     dist.destroy_process_group()
+
+# flag to downsample the gradient to a lower resolution
+downsample_quantile = False
+
+def gradient_threshold_hook(grad, percentile=0.98):
+    """Hook function to threshold gradients to their nth percentile value"""
+    global downsample_quantile
+    with torch.no_grad():
+        # Calculate percentile
+        try:
+            percentile_val = torch.quantile(grad.abs(), percentile)
+        except:
+            downsample_quantile = True
+
+        if downsample_quantile:
+                gradabs = v2img_3d(grad.abs())
+                gradabs = F.max_pool3d(gradabs, kernel_size=2, stride=2)
+                percentile_val = torch.quantile(gradabs, percentile)
+        # print("hook: ", grad.min(), grad.max(), percentile_val)
+        # Threshold gradients
+        return torch.clamp(grad, -percentile_val, percentile_val)
 
 @hydra.main(config_path='../../configs/dio/', config_name='oasis_ml_freeform_d4_3D')
 def mainfunc(cfg):
@@ -108,6 +138,10 @@ def main(rank, cfg, world_size=1):
         input_channels = 2
     else:
         input_channels = 1
+
+    # if combine fixed and moving image, then input channels is 2, and output channels will be doubled
+    if cfg.dataset.name == 'abdomen-MRCT':
+        input_channels = 12 * input_channels
 
     init_wandb(cfg, 'DEQReg', rank)
     set_seed(cfg.seed)
@@ -227,7 +261,7 @@ def main(rank, cfg, world_size=1):
     else:
         raise ValueError(f"Unknown image loss: {cfg.loss.img_loss}")
 
-    dice_loss_fn = DiceLossWithLongLabels(min_label=1, max_label=train_dataset.max_label_index, intersection_only=True,
+    dice_loss_fn = DiceLossWithLongLabels(min_label=1, max_label=train_dataset.max_label_index, intersection_only=False,
                                           order=cfg.loss.dice_order, center_dice_threshold=cfg.loss.center_dice_threshold if cfg.loss.weight_label_center > 0 else None, l2_mode=cfg.loss.dice_l2_mode)
     # label_center_fn = LabelCenterLoss(min_label=1, max_label=train_dataset.max_label_index, dice_threshold=cfg.loss.center_dice_threshold)
     # get gaussians for opt
@@ -255,8 +289,13 @@ def main(rank, cfg, world_size=1):
                 # only the last level is "gradualized"
                 iterations[-1] = min((epoch - cfg.train.train_new_level[till_feature_idx-1] + 1)*10, iterations[-1])
 
+        ## Training loop
         model.train()
         for it, batch in enumerate(train_dataloader):
+            
+            if it > 250:
+                break
+
             optim.zero_grad()
             # Sample 2D slices out of the volumes
             B, C, H, W, D = batch['source_img'].shape
@@ -293,9 +332,11 @@ def main(rank, cfg, world_size=1):
             if not cfg.deploy:
                 if it == 20:
                     break
-                try_retaingrad(fixed_features)
-                try_retaingrad(moving_features)  
                 print([f.shape for f in fixed_features])
+
+            # retain grad of the feature images for debugging
+            try_retaingrad(fixed_features)
+            try_retaingrad(moving_features)  
             
             ## Run multi-scale optimization
             displacements, losses_opt, jacnorm = diffopt_solver(fixed_features, moving_features,
@@ -314,6 +355,13 @@ def main(rank, cfg, world_size=1):
                 warps = displacements
             else:
                 warps = displacements_to_warps(displacements)
+            
+            # Register the gradient hook on the last displacement
+            displacements[-1].register_hook(gradient_threshold_hook)
+
+            # retain grad of last warp
+            displacements[-1].retain_grad()
+
             ## Get all losses ready 
             losses = {
                 'ncc': [],
@@ -398,12 +446,17 @@ def main(rank, cfg, world_size=1):
                 loss = loss + ((cfg.loss.decay_mse**epoch) * 0.5 * loss_mse / len(moving_decoded_features))
             # all 3 losses are added up now
             loss.backward()
+
+            # check the gradient of the moving image using retain_grad
+            moving_grad = try_getgrad(moving_features)
+            fixed_grad = try_getgrad(fixed_features)
+
             # gradient clipping
-            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)
-            for name, param in model.named_parameters():
-                if param.grad is not None:
-                    param.grad = param.grad * 1e5
+            # for name, param in model.named_parameters():
+            #     if param.grad is not None:
+            #         param.grad = param.grad * 1e5
             #         print(name, param.grad.norm().item())
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
 
             # change things to log
             # print details (or to log)
@@ -438,12 +491,20 @@ def main(rank, cfg, world_size=1):
                     assert len(losses_opt) == len(cur_levels)
                     for lvl, loss_opt in zip(cur_levels, losses_opt):
                         log_dict[f'loss_opt_{lvl}'] = wandb.plot.line(wandb.Table(data=loss_opt, columns=['iter', 'loss']), "iter", "loss", title=f"Optimization Loss at level {lvl}")
-                    # log_dict['warp_ncc_grad_norm'] = warp_ncc.grad.norm(dim=-1).mean().item()
-                    # log_dict['warp_dice_grad_norm'] = warp_dice.grad.norm(dim=-1).mean().item()
+                    
+                    # histogram 
+                    if fixed_grad[-1] is not None:
+                        grad_hist = fixed_grad[-1].detach().cpu().numpy().flatten()
+                        log_dict['fixed_grad_hist'] = wandb.Histogram(grad_hist)
+                    if moving_grad[-1] is not None:
+                        grad_hist = moving_grad[-1].detach().cpu().numpy().flatten()
+                        log_dict['moving_grad_hist'] = wandb.Histogram(grad_hist)
+
                     if global_step % cfg.save_every == 0:
                         # add gradient images
-                        B, _, Hi, Wi, Di = fixed_img_down.shape
+                        B, Cin, Hi, Wi, Di = fixed_img_down.shape
                         B, C, Hf, Wf, Df = fixed_features[-1].shape
+                        fi = np.random.randint(0, Cin)
                         with torch.no_grad():
                             # if either labels or warps are processed at native resolution, use the native resolution only, and upsample warp 
                             if not cfg.loss.downsampled_warps or not cfg.loss.downsampled_label_warps:
@@ -455,14 +516,14 @@ def main(rank, cfg, world_size=1):
                                 B, _, Hi, Wi, Di = fixed_img.shape
                                 fixed_img_sample_idx = np.random.randint(0, 10)-5 + Di//2
                                 # sample
-                                fixed_img_sample, moving_img_sample = fixed_img[0, 0, :, :, fixed_img_sample_idx], moving_img[0, 0, :, :, fixed_img_sample_idx]
-                                moved_img_sample = moved_image[0, 0, :, :, fixed_img_sample_idx].detach()
+                                fixed_img_sample, moving_img_sample = fixed_img[0, fi, :, :, fixed_img_sample_idx], moving_img[0, fi, :, :, fixed_img_sample_idx]
+                                moved_img_sample = moved_image[0, fi, :, :, fixed_img_sample_idx].detach()
                                 moved_label_sample = moved_label[0, 0, :, :, fixed_img_sample_idx].detach()
                             else:
                                 fixed_img_sample_idx = np.random.randint(0, 10)-5 + Di//2
                                 # sample the 2d slices
-                                fixed_img_sample, moving_img_sample = fixed_img_down[0, 0, :, :, fixed_img_sample_idx], moving_img_down[0, 0, :, :, fixed_img_sample_idx]
-                                moved_img_sample = moved_img[0, 0, :, :, fixed_img_sample_idx].detach()
+                                fixed_img_sample, moving_img_sample = fixed_img_down[0, fi, :, :, fixed_img_sample_idx], moving_img_down[0, fi, :, :, fixed_img_sample_idx]
+                                moved_img_sample = moved_img[0, fi, :, :, fixed_img_sample_idx].detach()
                                 # compute moved label 
                                 moved_label = F.grid_sample(moving_label_down.float(), warps[-1], align_corners=align_corners, mode='nearest').long()
                                 moved_label_sample = moved_label[0, 0, :, :, fixed_img_sample_idx].detach()
@@ -476,10 +537,35 @@ def main(rank, cfg, world_size=1):
                             log_dict['moved_img'] = torch2wandbimg(moved_img_sample)
                             # get label maps
                             fixed_img_sample_idx = np.random.randint(0, 10)-5 + Df//2
-                            for c in range(C):
+                            for c in range(min(C, 8)):
                                 fixed_feature_sample, moving_feature_sample = fixed_features[-1][0, c, :, :, fixed_img_sample_idx], moving_features[-1][0, c, :, :, fixed_img_sample_idx]
                                 log_dict[f'fixed_feature_{c}'] = torch2wandbimg(fixed_feature_sample)
                                 log_dict[f'moving_feature_{c}'] = torch2wandbimg(moving_feature_sample)
+                                
+                            # get gradient images
+                            if fixed_grad[-1] is not None:
+                                log_dict['fixed_grad_norm'] = torch2wandbimg(fixed_grad[-1].norm(dim=1)[0, :, :, fixed_img_sample_idx])
+                                # Add histogram of fixed gradients
+                                # grad_hist = fixed_grad[-1].detach().cpu().numpy().flatten()
+                                # log_dict['fixed_grad_hist'] = wandb.Histogram(grad_hist)
+                            if moving_grad[-1] is not None:
+                                log_dict['moving_grad_norm'] = torch2wandbimg(moving_grad[-1].norm(dim=1)[0, :, :, fixed_img_sample_idx])
+                                # Add histogram of moving gradients
+                                # grad_hist = moving_grad[-1].detach().cpu().numpy().flatten()
+                                # log_dict['moving_grad_hist'] = wandb.Histogram(grad_hist)
+                            # get gradient images
+                            for c in range(min(C, 8)):
+                                if fixed_grad[-1] is not None:
+                                    log_dict[f'fixed_feature_grad_{c}'] = torch2wandbimg(fixed_grad[-1][0, c, :, :, fixed_img_sample_idx])
+                                if moving_grad[-1] is not None:
+                                    log_dict[f'moving_feature_grad_{c}'] = torch2wandbimg(moving_grad[-1][0, c, :, :, fixed_img_sample_idx])
+                            # grad w.r.t. warp                            
+                            gradwarp = displacements[-1].grad.norm(dim=-1)[0, :, :, fixed_img_sample_idx]
+                            log_dict['warp_grad_norm'] = torch2wandbimg(gradwarp)
+                            for i in range(3):
+                                log_dict[f'warp_grad_{i}'] = torch2wandbimg(displacements[-1].grad[0, :, :, fixed_img_sample_idx, i])
+
+
                     wandb.log(log_dict)
                 else:
                     pass
@@ -519,6 +605,7 @@ def main(rank, cfg, world_size=1):
                                         phantom_step=cfg.diffopt.phantom_step, n_phantom_steps=cfg.diffopt.n_phantom_steps,
                                         debug=True,
                                         gaussian_grad=gaussian_grad, gaussian_warp=gaussian_warp)
+
                 if cfg.diffopt.warp_type in ['affine']:
                     warps = displacements
                 else:

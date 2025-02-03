@@ -4,6 +4,7 @@ from torch import nn
 from torch.nn import functional as F
 from typing import List, Optional
 from solver.losses import ItemOrList, gaussian_1d, separable_filtering
+from solver.diffeo import ALIGN_CORNERS as align_corners
 import copy
 
 def interpolate_warp(warp: torch.Tensor, size: List[int]):
@@ -11,11 +12,11 @@ def interpolate_warp(warp: torch.Tensor, size: List[int]):
     dims = len(warp.shape) - 2
     if dims == 2:
         B, H, W, _ = warp.shape
-        warpimg = F.interpolate(warp.permute(0, 3, 1, 2), size=size, mode='bilinear', align_corners=True)
+        warpimg = F.interpolate(warp.permute(0, 3, 1, 2), size=size, mode='bilinear', align_corners=align_corners)
         return warpimg.permute(0, 2, 3, 1)
     elif dims == 3:
         B, H, W, D, _ = warp.shape
-        warpimg = F.interpolate(warp.permute(0, 4, 1, 2, 3), size=size, mode='trilinear', align_corners=True)
+        warpimg = F.interpolate(warp.permute(0, 4, 1, 2, 3), size=size, mode='trilinear', align_corners=align_corners)
         return warpimg.permute(0, 2, 3, 4, 1)
     else:
         raise NotImplementedError
@@ -27,7 +28,7 @@ def displacements_to_warps(displacements):
         # disp is of shape [batch, H, W, D, 3] or [batch, H, W, 2]
         shape = disp.shape[1:-1]
         dims = len(shape)
-        grid = F.affine_grid(torch.eye(dims, dims+1, device=disp.device).unsqueeze(0), [1, 1] + list(shape), align_corners=True)
+        grid = F.affine_grid(torch.eye(dims, dims+1, device=disp.device).unsqueeze(0), [1, 1] + list(shape), align_corners=align_corners)
         warps.append(grid + disp)
     return warps
 
@@ -44,16 +45,16 @@ def scaling_and_squaring(u, grid=None, n = 6):
     dims = u.shape[-1]
     v = (1.0/2**n) * u
     if grid is None:
-        grid = F.affine_grid(torch.eye(dims, dims+1, device=u.device).unsqueeze(0), [1, 1] + list(u.shape[1:-1]), align_corners=True)
+        grid = F.affine_grid(torch.eye(dims, dims+1, device=u.device).unsqueeze(0), [1, 1] + list(u.shape[1:-1]), align_corners=align_corners)
 
     if dims == 3:
         for i in range(n):
             vimg = v.permute(0, 4, 1, 2, 3)          # [1, 3, D, H, W]
-            v = v + F.grid_sample(vimg, v + grid, align_corners=True).permute(0, 2, 3, 4, 1)
+            v = v + F.grid_sample(vimg, v + grid, align_corners=align_corners).permute(0, 2, 3, 4, 1)
     elif dims == 2:
         for i in range(n):
             vimg = v.permute(0, 3, 1, 2)
-            v = v + F.grid_sample(vimg, v + grid, align_corners=True).permute(0, 2, 3, 1)
+            v = v + F.grid_sample(vimg, v + grid, align_corners=align_corners).permute(0, 2, 3, 1)
     else:
         raise ValueError('Invalid dimension: {}'.format(dims))
     return v
@@ -74,7 +75,7 @@ def downsample(image: ItemOrList[torch.Tensor], size: List[int], mode: str, sigm
         gaussians = [gaussian_1d(s, truncated=2) for s in sigma]
     # otherwise gaussians is given, just downsample
     image_smooth = separable_filtering(image, gaussians)
-    image_down = F.interpolate(image_smooth, size=size, mode=mode, align_corners=True)
+    image_down = F.interpolate(image_smooth, size=size, mode=mode, align_corners=align_corners)
     return image_down
 
 ## Write an EMA class that copies a model and updates the weights

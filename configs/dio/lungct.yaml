@@ -6,29 +6,31 @@ defaults:
   - default
   - _self_
 
-tag: abdomen_mrct_3d
+tag: lungct
 
 dataset:
-  name: abdomen-MRCT
-  data_root: ./data/abdomen-MRCT
+  name: lungct
+  data_root: ./data/lungct
   split: train
+  use_mind: False
+  aug: False
 
 deploy: True
 
 model:
   f_maps: [16, 16, 32, 64, 64]
-  name: lku
+  name: unet
   combine: False    # combine fixed and moving into a single image
-  # levels: [1, 2, 4]       # can be any order, it is sorted inside the network (processing is done from lowest to highest res though)
   levels: [1, 2, 4]
-  output_channels: 32     # number of channels in feature extractor
+  output_channels: 16     # number of channels in feature extractor
   init_zero_features: False  # initialize the feature extractor with zeros
   skip: True
 
 train:
   epochs: 100
   lr: 3e-4
-  train_new_level: [10, 25]    # list should be one less than the number of levels
+  # train_new_level: [25, 100]    # list should be one less than the number of levels
+  train_new_level: [10, 20]    # list should be one less than the number of levels
   backprop_both: False   # do we want to backprop through both the fixed and moving features
   lr_power_decay: 0.9   # polynomial power decay for learning rate
   feature_grad_norm: -1
@@ -37,18 +39,13 @@ train:
   cc_unsigned: True        # if set to True, will compute the unsigned NCC
 
 loss:
-  weight_dice: 1.0
   weight_ncc: 1.0
+  weight_kps: 0.5
   weight_jacobian: 0.0
-  decay_mse: 0.0      # decay rate for MSE loss of the feature average versus the target
   downsampled_warps: True    # if set to True, will compute the ncc between downsampled moving and fixed images (default)
   downsampled_label_warps: True
   train_last_warp_only: False   # whether to train all layers or just last one
-  img_loss: mse
-  dice_order: 1       # change default dice order to 2
-  weight_label_center: 0.0  # no center loss by default
-  center_dice_threshold: 0.5  # disable center loss
-  dice_l2_mode: 'dice'     # whether to use L2 distance for dice loss during training
+  img_loss: ncc
 
 # parameters for diffeomorphic optimization
 diffopt: 
@@ -65,7 +62,7 @@ diffopt:
   learning_rate: 0.003
 
 batch_size: 1
-num_workers: 0
+num_workers: 4
 model_path: Null
 save_dir: ''
 save_every: 100

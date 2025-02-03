@@ -135,7 +135,7 @@ class LKUNet(nn.Module):
             )
         else:
             layer = nn.Sequential(
-                nn.InstanceNorm3d(out_channels),
+                # nn.InstanceNorm3d(out_channels),
                 nn.Conv3d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias),
             )
                 # nn.Softsign())

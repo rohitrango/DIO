@@ -8,7 +8,7 @@ defaults:
 tag: oasis_ml_4x2x1x
 
 model:
-  f_maps: [32, 32, 64]
+  f_maps: [16, 32, 64]
   name: unetencoder
   levels: [1, 2, 4]   
   multiplier: 1
@@ -21,9 +21,11 @@ train:
   cc_unsigned: True        # if set to True, will compute the unsigned NCC
 
 loss:
-  downsampled_label_warps: False
-  dice_order: 2
+  downsampled_label_warps: True
+  dice_order: 1
   weight_ncc: 1.0
+  center_dice_threshold: None
+  l2_mode: dice
 
 # parameters for diffeomorphic optimization
 diffopt: 

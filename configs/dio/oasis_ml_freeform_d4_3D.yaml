@@ -26,7 +26,7 @@ loss:
   dice_order: 2       # change default dice order to 2
   weight_label_center: 0  # no center loss by default
   center_dice_threshold: 0.5
-  dice_l2_mode: False     # whether to use L2 distance for dice loss during training
+  dice_l2_mode: 'dice'     # what loss to use during training (default dice)
   img_loss: ncc
   train_last_warp_only: False   # whether to train all layers or just last one
 

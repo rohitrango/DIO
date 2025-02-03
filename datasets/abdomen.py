@@ -1,7 +1,7 @@
 '''
 author: rohitrango
 
-Dataset for loading the OASIS dataset (from the learn2reg challenge)
+Dataset for loading the AbdomenCT dataset (from the learn2reg challenge)
 '''
 import torch
 import nibabel as nib
@@ -15,6 +15,9 @@ from PIL import Image
 import json
 import itertools
 from scipy.ndimage import affine_transform
+
+from torch import nn
+import torch.nn.functional as F
 
 def get_multimodal_pairs(images):
     ''' get pairs of images that are of different modalities '''
@@ -53,6 +56,58 @@ def preprocess_mr(image, percentile=95):
     image = image / percentile
     return image
 
+def pdist_squared(x):
+    xx = (x**2).sum(dim=1).unsqueeze(2)
+    yy = xx.permute(0, 2, 1)
+    dist = xx + yy - 2.0 * torch.bmm(x.permute(0, 2, 1), x)
+    dist[dist != dist] = 0
+    dist = torch.clamp(dist, 0.0, np.inf)
+    return dist
+
+def MINDSSC(img, radius=2, dilation=2, device='cuda'):
+    # see http://mpheinrich.de/pub/miccai2013_943_mheinrich.pdf for details on the MIND-SSC descriptor
+    # code taken from: https://github.com/multimodallearning/convexAdam/blob/main/src/convexAdam/convex_adam_utils.py
+    
+    # kernel size
+    kernel_size = radius * 2 + 1
+    
+    # define start and end locations for self-similarity pattern
+    six_neighbourhood = torch.Tensor([[0,1,1],
+                                      [1,1,0],
+                                      [1,0,1],
+                                      [1,1,2],
+                                      [2,1,1],
+                                      [1,2,1]]).long()
+    
+    # squared distances
+    dist = pdist_squared(six_neighbourhood.t().unsqueeze(0)).squeeze(0)
+    
+    # define comparison mask
+    x, y = torch.meshgrid(torch.arange(6), torch.arange(6), indexing='ij')
+    mask = ((x > y).view(-1) & (dist == 2).view(-1))
+    
+    # build kernel
+    idx_shift1 = six_neighbourhood.unsqueeze(1).repeat(1,6,1).view(-1,3)[mask,:]
+    idx_shift2 = six_neighbourhood.unsqueeze(0).repeat(6,1,1).view(-1,3)[mask,:]
+    mshift1 = torch.zeros(12, 1, 3, 3, 3).to(device)
+    mshift1.view(-1)[torch.arange(12) * 27 + idx_shift1[:,0] * 9 + idx_shift1[:, 1] * 3 + idx_shift1[:, 2]] = 1
+    mshift2 = torch.zeros(12, 1, 3, 3, 3).to(device)
+    mshift2.view(-1)[torch.arange(12) * 27 + idx_shift2[:,0] * 9 + idx_shift2[:, 1] * 3 + idx_shift2[:, 2]] = 1
+    rpad1 = nn.ReplicationPad3d(dilation)
+    rpad2 = nn.ReplicationPad3d(radius)
+    # compute patch-ssd
+    ssd = F.avg_pool3d(rpad2((F.conv3d(rpad1(img), mshift1, dilation=dilation) - F.conv3d(rpad1(img), mshift2, dilation=dilation)) ** 2), kernel_size, stride=1)
+    # MIND equation
+    mind = ssd - torch.min(ssd, 1, keepdim=True)[0]
+    mind_var = torch.mean(mind, 1, keepdim=True)
+    mind_var = torch.clamp(mind_var, mind_var.mean().item()*0.001, mind_var.mean().item()*1000)
+    mind /= mind_var
+    mind = torch.exp(-mind)
+    #permute to have same ordering as C++ code
+    mind = mind[:, torch.Tensor([6, 8, 1, 11, 2, 10, 0, 7, 9, 4, 5, 3]).long(), :, :, :]
+    return mind
+
+
 class AbdomenMRCT(Dataset):
     def __init__(self, data_root, split='train', affine_augmentation_prob=0.2) -> None:
         super().__init__()
@@ -62,6 +117,8 @@ class AbdomenMRCT(Dataset):
 
         images = sorted(glob(osp.join(data_root, 'imagesTr', '*.nii.gz')))
         images0, images1 = separate_modalities(images)
+        masks = sorted(glob(osp.join(data_root, 'masksTr', '*.nii.gz')))
+        masks0, masks1 = separate_modalities(masks)
         labels = sorted(glob(osp.join(data_root, 'labelsTr', '*.nii.gz')))
         labels0, labels1 = separate_modalities(labels)
 
@@ -73,26 +130,32 @@ class AbdomenMRCT(Dataset):
         if split == 'train':
             self.images = images0[:-N] + images1[:-N]
             self.labels = labels0[:-N] + labels1[:-N]
+            self.masks = masks0[:-N] + masks1[:-N]
             self.pairs = get_multimodal_pairs(self.images)
 
         elif split == 'val':
             self.images = images0[-N:] + images1[-N:]
             self.labels = labels0[-N:] + labels1[-N:]
+            self.masks = masks0[-N:] + masks1[-N:]
             self.pairs = get_multimodal_pairs(self.images)
 
         elif split == 'test':
             pairs = []
             images = []
+            masks = []
             i = 0
             for item in metadata['registration_test']:
                 fixed, moving = item['fixed'], item['moving']
                 fixed, moving = osp.join(data_root, fixed), osp.join(data_root, moving)
                 images.append(fixed)
                 images.append(moving)
+                masks.append(fixed.replace("images", "masks"))
+                masks.append(moving.replace("images", "masks"))
                 pairs.append((i, i+1))
                 i += 2
             self.images = images
             self.labels = []
+            self.masks = []
             self.pairs = pairs
         
         # max label index
@@ -143,10 +206,14 @@ class AbdomenMRCT(Dataset):
         affine_matrix = Rx @ Ry @ Rz @ np.diag(scales)
         
         # Apply transformation using scipy's affine_transform
-        center = np.array(image.shape) // 2
+        center = np.array(image.shape[-3:]) // 2
         offset = center - affine_matrix @ center
         
-        aug_image = affine_transform(image, affine_matrix, offset=offset, order=1)
+        C = image.shape[0]
+        aug_image = [0] * C
+        for i in range(C):
+            aug_image[i] = affine_transform(image[i], affine_matrix, offset=offset, order=1)
+        aug_image = np.stack(aug_image, axis=0)
         
         if label is not None:
             # Convert label to numpy, apply transform, and convert back
@@ -157,11 +224,14 @@ class AbdomenMRCT(Dataset):
 
     def __getitem__(self, index):
         fixed, moving = [self.images[x] for x in self.pairs[index]]
+        fixedmask, movingmask = [self.masks[x] for x in self.pairs[index]]
         if self.labels != []:
             fixedlab, movlab = [self.labels[x] for x in self.pairs[index]]
         else:
             fixedlab, movlab = None, None
         
+        fixedmask = nib.load(fixedmask).get_fdata().squeeze()
+        movingmask = nib.load(movingmask).get_fdata().squeeze()
         # load image
         fixedimg = nib.load(fixed).get_fdata().squeeze()
         movingimg = nib.load(moving).get_fdata().squeeze()
@@ -174,11 +244,21 @@ class AbdomenMRCT(Dataset):
             movingimg = preprocess_ct(movingimg)
         else:
             movingimg = preprocess_mr(movingimg)
-        
+
+        # apply mask to image
+        fixedimg = fixedimg * fixedmask
+        movingimg = movingimg * movingmask
+
+        # compute MIND-SSC descriptor
+        fixedimg = MINDSSC(torch.from_numpy(fixedimg)[None, None].float().cuda())[0].cpu().numpy() * fixedmask[None]
+        movingimg = MINDSSC(torch.from_numpy(movingimg)[None, None].float().cuda())[0].cpu().numpy() * movingmask[None]
+        # fixedimg = 2*fixedimg - 1
+        # movingimg = 2*movingimg - 1
+
         if self.split == 'test':
             return {
-                'source_img': torch.from_numpy(fixedimg).unsqueeze(0).float(),
-                'target_img': torch.from_numpy(movingimg).unsqueeze(0).float(),
+                'source_img': torch.from_numpy(fixedimg).float(),
+                'target_img': torch.from_numpy(movingimg).float(),
                 'source_img_path': fixed,
                 'target_img_path': moving
             }
@@ -189,22 +269,26 @@ class AbdomenMRCT(Dataset):
 
         # augment
         if self.split == 'train':
-            for ax in range(3):
-                if np.random.rand() < 0.5:
-                    fixedimg = np.flip(fixedimg, axis=ax)
-                    fixedlabdata = np.flip(fixedlabdata, axis=ax)
-                    movingimg = np.flip(movingimg, axis=ax)
-                    movinglabdata = np.flip(movinglabdata, axis=ax)
+            # for ax in range(3):
+            #     if np.random.rand() < 0.5:
+            #         C = fixedimg.shape[0]
+            #         for i in range(C):
+            #             fixedimg[i] = np.flip(fixedimg[i], axis=ax)
+            #             movingimg[i] = np.flip(movingimg[i], axis=ax)
+            #         # also flip the label
+            #         fixedlabdata = np.flip(fixedlabdata, axis=ax)
+            #         movinglabdata = np.flip(movinglabdata, axis=ax)
             
             # Apply 3D affine augmentation with same seed for fixed and moving images
+            print(fixedimg.shape, movingimg.shape, fixedlabdata.shape, movinglabdata.shape)
             if np.random.rand() < self.affine_augmentation_prob:  # 20% chance to apply augmentation
                 seed = np.random.randint(0, 2**32)
                 fixedimg, fixedlabdata = self.apply_3d_augmentation(fixedimg, fixedlabdata, seed=seed)
                 movingimg, movinglabdata = self.apply_3d_augmentation(movingimg, movinglabdata, seed=seed)
         
         return {
-            'source_img': torch.from_numpy(fixedimg+0).unsqueeze(0).float(),
-            'target_img': torch.from_numpy(movingimg+0).unsqueeze(0).float(),
+            'source_img': torch.from_numpy(fixedimg+0).float(),
+            'target_img': torch.from_numpy(movingimg+0).float(),
             'source_img_path': fixed,
             'target_img_path': moving,
             'source_label': torch.from_numpy(fixedlabdata+0).unsqueeze(0).long(),

@@ -4,6 +4,7 @@ import torch.nn as nn
 import math
 from torch.nn import functional as F
 from functools import partial
+from torch.autograd import Function
 
 '''
 Cross correlation
@@ -19,7 +20,8 @@ T = TypeVar("T")
 ItemOrList = Union[T, List[T]]
 
 # from solver.adam import ALIGN_CORNERS as 
-align_corners = False
+# align_corners = False
+from .diffeo import ALIGN_CORNERS as align_corners
 
 @torch.jit.script
 def gaussian_1d(
@@ -60,6 +62,34 @@ def gaussian_1d(
     else:
         raise NotImplementedError(f"Unsupported option: approx='{approx}'.")
     return out / out.sum() if normalize else out  # type: ignore
+
+class SmearLoss(Function):
+    @staticmethod
+    def forward(ctx, x, y, bwd_window):
+        # x and y are images from [0, 1]
+        ctx.save_for_backward(y - x, bwd_window)
+        return (x - y).pow(2)
+    
+    @staticmethod
+    def backward(ctx, grad_output):
+        yminusx, bwd_window = ctx.saved_tensors
+        sigma = bwd_window / 2.0
+        gaussian_kernel = gaussian_1d(sigma=sigma)
+        residual_y = grad_output * yminusx
+        residual_y = separable_filtering(residual_y, kernels=gaussian_kernel, mode='zeros')
+        residual_x = -residual_y
+        return residual_x, residual_y, None
+
+def mse_loss_smear(x, y, fwd_window=3, bwd_window=3):
+    # x and y are binary images 
+    # print(x.shape, y.shape)
+    # input("...")
+    if fwd_window > 0:
+        gaussian_kernel = gaussian_1d(sigma=torch.tensor(fwd_window, device=x.device) / 2.0)
+        x = separable_filtering(x, kernels=gaussian_kernel, mode='zeros')
+        y = separable_filtering(y, kernels=gaussian_kernel, mode='zeros')
+    loss = SmearLoss.apply(x, y, torch.tensor(bwd_window, device=x.device))
+    return loss.mean()
 
 
 @torch.jit.script
@@ -393,7 +423,7 @@ class DiceLossWithLongLabels(nn.Module):
     Dice loss with long labels (to prevent explosive memory requirements for huge label maps) 
     This requires us to provide the warp field as well (to warp the labels and pass gradients through the warp)
     '''
-    def __init__(self, min_label=1, max_label=35, eps=1e-6, order=2, intersection_only=False, center_dice_threshold=None, l2_mode=False):
+    def __init__(self, min_label=1, max_label=35, eps=1e-6, order=2, intersection_only=False, center_dice_threshold=None, l2_mode='dice'):
         # super(DiceLossWithLongLabels, self).__init__()
         super().__init__()
         self.min_label = min_label
@@ -426,11 +456,13 @@ class DiceLossWithLongLabels(nn.Module):
         # warp is of size [B, H, W, D, 3]
         self.center_dice_scores = []
         self.center_dist = []
+        print(train, y_moving.shape, y_fixed.shape, warp.shape)
+        print(y_moving.min(), y_moving.max(), y_fixed.min(), y_fixed.max())
 
         coord = None
         if self.center_dice_threshold is not None:
             n_dims = len(y_moving.shape) - 2
-            coord = F.affine_grid(torch.eye(n_dims, n_dims+1, device=y_fixed.device).unsqueeze(0), y_fixed.size())  # [1, H, W, D, 3] or [1, H, W, 2]
+            coord = F.affine_grid(torch.eye(n_dims, n_dims+1, device=y_fixed.device).unsqueeze(0), y_fixed.size(), align_corners=align_corners)  # [1, H, W, D, 3] or [1, H, W, 2]
             # for i in range(n_dims):
             #     coord[..., i] = coord[..., i] * (y_fixed.size(-1 - i) - 1) / 2
             permute_order = [0] + [1+n_dims] + [i+1 for i in range(n_dims)]
@@ -452,8 +484,8 @@ class DiceLossWithLongLabels(nn.Module):
                 if not train:
                     y_moving_i_warped = (y_moving_i_warped >= 0.5).float()
                 
-                # compute dice loss if inference or if l2_mode is off
-                if not train or not self.l2_mode:
+                # compute dice loss if inference or if l2_mode is set to dice
+                if not train or (self.l2_mode == 'dice'):
                     # average over all pixels
                     intersection = (y_fixed_i * y_moving_i_warped).flatten(1).sum(1)   # [B, ]
                     if self.order == 1:
@@ -465,7 +497,12 @@ class DiceLossWithLongLabels(nn.Module):
                     # if center dice threshold is set, compute the center distance
                     self.add_to_center_stat(coord, dice_score.item(), y_fixed_i, y_moving_i_warped)
                 else:
-                    dice_losses.append(F.mse_loss(y_fixed_i, y_moving_i_warped, reduction='mean'))
+                    if self.l2_mode == 'mse':
+                        dice_losses.append(F.mse_loss(y_fixed_i, y_moving_i_warped, reduction='mean'))
+                    elif self.l2_mode == 'mse_smear':
+                        dice_losses.append(mse_loss_smear(y_fixed_i, y_moving_i_warped))
+                    else:
+                        raise ValueError(f"Unknown l2 mode: {self.l2_mode}")
                     # center stat not implemented for L2 mode
         else:
             dice_losses = []
@@ -476,7 +513,8 @@ class DiceLossWithLongLabels(nn.Module):
                 if not train:
                     y_moving_i_warped = (y_moving_i_warped >= 0.5).float()
                 
-                if not train or not self.l2_mode:
+                # compute dice loss if inference or if l2_mode is set to dice
+                if not train or (self.l2_mode == 'dice'):
                     # average over all pixels
                     intersection = (y_fixed_i * y_moving_i_warped).flatten(1).sum(1)   # [B, ]
                     if self.order == 1:
@@ -488,10 +526,13 @@ class DiceLossWithLongLabels(nn.Module):
                     # add to center stats
                     self.add_to_center_stat(coord, dice_score.item(), y_fixed_i, y_moving_i_warped)
                 else:
-                    dice_losses.append(F.mse_loss(y_fixed_i, y_moving_i_warped, reduction='mean'))
-
+                    if self.l2_mode == 'mse':
+                        dice_losses.append(F.mse_loss(y_fixed_i, y_moving_i_warped, reduction='mean'))
+                    elif self.l2_mode == 'mse_smear':
+                        dice_losses.append(mse_loss_smear(y_fixed_i, y_moving_i_warped))
+                    else:
+                        raise ValueError(f"Unknown l2 mode: {self.l2_mode}")
         return dice_losses
-
 
 def _get_loss_function_factory(loss_name, cfg, spatial_dims=3):
     ''' get appropriate loss function for the task '''

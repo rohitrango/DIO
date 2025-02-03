@@ -8,7 +8,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from typing import List, Tuple, Optional, Union, Callable
-from solver.losses import _get_loss_function_factory
+# from solver.losses import _get_loss_function_factory
 from solver.utils import v2img_2d, v2img_3d, img2v_2d, img2v_3d, separable_filtering, ItemOrList
 from solver.affine import run_affine_transform_3d
 from packaging import version

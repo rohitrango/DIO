@@ -32,3 +32,6 @@ python test_multi_level_3d.py --config-path saved_models/oasis_ml_4x2x1x/oasis_l
 # LKU encoder
 python test_multi_level_3d.py --config-path saved_models/oasis_ml_4x2x1x/oasis_lkuencv2_mse/ --config-name config.yaml +learn2reg_eval=False dataset.split=val hydra.job.chdir=False diffopt.warp_type=diffeomorphic diffopt.phantom_step=adam diffopt.iterations=[400,200,100]
 
+PYTHONPATH=./ python scripts/dio/train_multi_level_3d.py --config-name oasis_4x2x1x_unetencoder exp_name=oasis_lku_l2_per98_phantom5 loss.img_loss=mse train.epochs=100 model.name=lku dataset.data_root=/mnt/rohit_data2/OASIS_old/ +diffopt.learning_rate=3e-3 train.train_new_level=[5,20] save_every=50 loss.weight_dice=1.0 loss.dice_l2_mode=dice deploy=True loss.weight_ncc=1.0 diffopt.n_phantom_steps=5
+PYTHONPATH=./ python scripts/dio/train_multi_level_3d.py --config-name oasis_4x2x1x_unetencoder exp_name=oasis_lku_l2_per98_phantom3 loss.img_loss=mse train.epochs=100 model.name=lku dataset.data_root=/mnt/rohit_data2/OASIS_old/ +diffopt.learning_rate=3e-3 train.train_new_level=[5,20] save_every=50 loss.weight_dice=1.0 loss.dice_l2_mode=dice deploy=True loss.weight_ncc=1.0 diffopt.n_phantom_steps=3
+PYTHONPATH=./ python scripts/dio/train_multi_level_3d_kps.py exp_name=lungct_v1ncc_adam_unet diffopt.phantom_step=sgd/adam
