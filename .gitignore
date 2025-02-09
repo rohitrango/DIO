@@ -12,6 +12,7 @@ data/
 cuda_gridsample_grad2_py19
 cuda_gridsample_grad2
 dio/script.sh
+learn2reg_submissions
 experiments/
 outputs/
 results/

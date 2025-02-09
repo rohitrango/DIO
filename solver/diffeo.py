@@ -57,6 +57,7 @@ def multi_scale_diffeomorphic_solver(
         gaussian_grad: Optional[ItemOrList[torch.Tensor]] = None,
         learning_rate: float = 1,
         debug: bool = True,
+        displacement_loss_fn: Optional[Callable] = None,
         # beta1: float = 0.5,
         beta1: float = 0.9,
         beta2: float = 0.99,
@@ -118,6 +119,11 @@ def multi_scale_diffeomorphic_solver(
                     loss = loss_function(moved_feature, fixed_feature.detach())
                     if debug:
                         losses_lvl.append(loss.item())
+                    
+                    if displacement_loss_fn is not None:
+                        loss_disp = displacement_loss_fn(warp)
+                        loss = loss + loss_disp
+
                     warp_grad = torch.autograd.grad(loss, warp)[0].detach()
                 # divergence check
                 lossitem = loss.item()
@@ -430,6 +436,7 @@ def multi_scale_warp_solver(
             exp_avg = img2v(F.interpolate(v2img(exp_avg.detach()), size=new_shape, mode='bilinear' if n_dims == 2 else 'trilinear', align_corners=align_corners))
             exp_sq_avg = img2v(F.interpolate(v2img(exp_sq_avg.detach()), size=new_shape, mode='bilinear' if n_dims == 2 else 'trilinear', align_corners=align_corners))
     # return all_warps
+    # print([len(x) for x in losses])
     if debug:
         return all_warps, losses, jacobian_norm
     else:

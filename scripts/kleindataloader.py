@@ -28,6 +28,7 @@ def load_pair(image, label, isotropic, crop):
     # label = label.transpose(0, 2, 1)[::-1, ::-1]
     img = img / img.max() 
     img[img < 0] = 0
+
     # crop this 
     if crop:
         H, W, D = img.shape
@@ -49,7 +50,6 @@ def load_pair(image, label, isotropic, crop):
         pad = [(x//2, x - x//2) for x in rem]
         img = np.pad(img, pad, mode='constant')
         label = np.pad(label, pad, mode='constant')
-
     return img, label
 
 class KleinDatasets(Dataset):
@@ -109,6 +109,7 @@ class KleinDatasets(Dataset):
         # print(self.pairs[index])
         moving, moving_seg = load_pair(self.pairs[index][0], self.pairs[index][1], self.isotropic, self.crop)
         fixed, fixed_seg = load_pair(self.pairs[index][2], self.pairs[index][3], self.isotropic, self.crop)
+
         # create torch tensor
         fixed, moving = torch.from_numpy(np.ascontiguousarray(fixed)).float(), torch.from_numpy(np.ascontiguousarray(moving)).float()
         fixed_seg, moving_seg = torch.from_numpy(np.ascontiguousarray(fixed_seg)).long(), torch.from_numpy(np.ascontiguousarray(moving_seg)).long()

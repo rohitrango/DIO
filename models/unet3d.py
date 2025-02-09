@@ -848,7 +848,7 @@ class AbstractUNet(nn.Module):
         is_relu = 'r' in self.layer_order
         # iterate through all conv layers
         for param, mod in self.named_modules():
-            print(param)
+            # print(param)
             if isinstance(mod, nn.Conv3d) or isinstance(mod, nn.Conv2d):
                 # init weights
                 nn.init.kaiming_uniform_(mod.weight, a=None, mode='fan_in', nonlinearity='relu' if is_relu else 'leaky_relu')

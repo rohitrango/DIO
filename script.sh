@@ -32,6 +32,19 @@ python test_multi_level_3d.py --config-path saved_models/oasis_ml_4x2x1x/oasis_l
 # LKU encoder
 python test_multi_level_3d.py --config-path saved_models/oasis_ml_4x2x1x/oasis_lkuencv2_mse/ --config-name config.yaml +learn2reg_eval=False dataset.split=val hydra.job.chdir=False diffopt.warp_type=diffeomorphic diffopt.phantom_step=adam diffopt.iterations=[400,200,100]
 
+## train lung
 PYTHONPATH=./ python scripts/dio/train_multi_level_3d.py --config-name oasis_4x2x1x_unetencoder exp_name=oasis_lku_l2_per98_phantom5 loss.img_loss=mse train.epochs=100 model.name=lku dataset.data_root=/mnt/rohit_data2/OASIS_old/ +diffopt.learning_rate=3e-3 train.train_new_level=[5,20] save_every=50 loss.weight_dice=1.0 loss.dice_l2_mode=dice deploy=True loss.weight_ncc=1.0 diffopt.n_phantom_steps=5
 PYTHONPATH=./ python scripts/dio/train_multi_level_3d.py --config-name oasis_4x2x1x_unetencoder exp_name=oasis_lku_l2_per98_phantom3 loss.img_loss=mse train.epochs=100 model.name=lku dataset.data_root=/mnt/rohit_data2/OASIS_old/ +diffopt.learning_rate=3e-3 train.train_new_level=[5,20] save_every=50 loss.weight_dice=1.0 loss.dice_l2_mode=dice deploy=True loss.weight_ncc=1.0 diffopt.n_phantom_steps=3
 PYTHONPATH=./ python scripts/dio/train_multi_level_3d_kps.py exp_name=lungct_v1ncc_adam_unet diffopt.phantom_step=sgd/adam
+PYTHONPATH=./ python scripts/dio/train_multi_level_3d_kps.py exp_name=lungct_v1_adam_unet_mind diffopt.phantom_step=adam model.name=unet dataset.use_mind=True loss.img_loss=mse
+PYTHONPATH=./ python scripts/dio/train_multi_level_3d_kps.py exp_name=lungct_v1_adam_lku_mind_lvl1 diffopt.phantom_step=adam model.name=lku dataset.use_mind=True loss.img_loss=mse train.train_new_level=[0,0] train.epochs=200
+PYTHONPATH=./ python scripts/dio/train_multi_level_3d_kps.py exp_name=lungct_v1ncc_adam_unet diffopt.phantom_step=adam
+PYTHONPATH=./ python scripts/dio/train_multi_level_3d_kps.py exp_name=lungct_v1_adam_unet_mind_lvl1 diffopt.phantom_step=adam model.name=unet dataset.use_mind=True loss.img_loss=mse train.train_new_level=[0,0] train.epochs=200
+
+
+## test lung
+PYTHONPATH=./ python scripts/dio/test_multi_level_3d_kps.py --config-path ../../saved_models/lungct/lungct_v1_adam_lku_mind_lvl1_aug --config-name config.yaml hydra.job.chdir=False
+echo PYTHONPATH=./ python scripts/dio/train_multi_level_3d_kps.py --config-name nlst exp_name=nlst_lkumini_fireants_alllvl_tv10.0 diffopt.warp_type=diffeomorphic diffopt.learning_rate=0.5 train.train_new_level=[0] loss.weight_tv=10.0
+
+## best runs
+PYTHONPATH=./ python scripts/dio/test_multi_level_3d_kps.py --config-path ../../saved_models/nlst/nlst_lkumini_fireants_alllvl_kps0.01_nothres --config-name config.yaml hydra.job.chdir=False +tv_coeff_test=0.05 diffopt.learning_rate=0.75 +learn2reg=True

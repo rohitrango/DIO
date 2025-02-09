@@ -30,6 +30,12 @@ import pandas as pd
 from torch import nn
 import torch.nn.functional as F
 
+def process_image(image, mask):
+    image = np.clip(image, -1200, 400)
+    image = (image - image.min()) / (image.max() - image.min())
+    image = image * mask
+    return image
+
 def to_torch_kps(kps, shape):
     # shape is [X, Y, Z] and kps = [N, 3=xyz]
     kps = kps.astype(np.float32)
@@ -74,85 +80,74 @@ def get_affine_transform(seed=None, angle=np.pi/6, translation=0.1):
     affine = np.concatenate([affine, np.array([[0, 0, 0, 1]])], axis=0)
     return torch.from_numpy(affine).float()
 
-class LungCT(Dataset):
+class NLST(Dataset):
     ''' dataset that returns images and keypoints '''
-    def __init__(self, data_root='data/lungct', split='train', use_mind=False, aug=False):
+    def __init__(self, data_root='data/NLST', split='train', use_mind=False, aug=False):
         super().__init__()
-        self.images = sorted(glob(osp.join(data_root, 'imagesTr' if split != 'test' else 'imagesTs', '*.nii.gz')))
-        self.masks = sorted(glob(osp.join(data_root, 'masksTr' if split != 'test' else 'masksTs', '*.nii.gz')))
-        self.keypoints = sorted(glob(osp.join(data_root, 'keypointsTr', '*.csv'))) if split != 'test' else [None for _ in range(len(self.images))]
-        # if not test, split the images into train and val
-        n = len(self.images)
-        print(f"split {split} has {n} images")
-        assert n % 2 == 0, "Should have paired images"
-        self.f_images = self.images[::2]
-        self.m_images = self.images[1::2]
-        self.f_masks = self.masks[::2]
-        self.m_masks = self.masks[1::2]
-        self.f_keypoints = self.keypoints[::2] if self.keypoints is not None else None
-        self.m_keypoints = self.keypoints[1::2] if self.keypoints is not None else None
-        k = 3
-        # split k images for val
-        if split != 'test':
-            if split == 'train':
-                self.f_images = self.f_images[:-k]
-                self.m_images = self.m_images[:-k]
-                self.f_masks = self.f_masks[:-k]
-                self.m_masks = self.m_masks[:-k]
-                self.f_keypoints = self.f_keypoints[:-k]
-                self.m_keypoints = self.m_keypoints[:-k]
-            else:
-                self.f_images = self.f_images[-k:]
-                self.m_images = self.m_images[-k:]
-                self.f_masks = self.f_masks[-k:]
-                self.m_masks = self.m_masks[-k:]
-                self.f_keypoints = self.f_keypoints[-k:]
-                self.m_keypoints = self.m_keypoints[-k:]
-        else:
-            pass
+        # self.images = sorted(glob(osp.join(data_root, 'imagesTr' if split != 'test' else 'imagesTs', '*.nii.gz')))
+        # self.masks = sorted(glob(osp.join(data_root, 'masksTr' if split != 'test' else 'masksTs', '*.nii.gz')))
+        # self.keypoints = sorted(glob(osp.join(data_root, 'keypointsTr', '*.csv'))) if split != 'test' else [None for _ in range(len(self.images))]
+        with open(osp.join(data_root, 'NLST_dataset.json'), 'r') as f:
+            metadata = json.load(f)
         
+        if split == 'train':
+            self.reg_list = metadata['training_paired_images']
+        elif split == 'val':
+            self.reg_list = metadata['registration_val']
+        else:
+            raise ValueError(f"Invalid split: {split}")
+        
+        for item in self.reg_list:
+            item['fixed'] = osp.join(data_root, item['fixed'])
+            item['moving'] = osp.join(data_root, item['moving'])
+            item['fixed_kps'] = item['fixed'].replace('imagesTr', 'keypointsTr').replace('.nii.gz', '.csv')
+            item['moving_kps'] = item['moving'].replace('imagesTr', 'keypointsTr').replace('.nii.gz', '.csv')
+            item['fixed_mask'] = item['fixed'].replace('imagesTr', 'masksTr')
+            item['moving_mask'] = item['moving'].replace('imagesTr', 'masksTr')
+
+        # if not test, split the images into train and val
         self.use_mind = use_mind
         self.aug = aug
 
         self.split = split
-        self.N = len(self.f_images)
+        self.N = len(self.reg_list)
 
     def __len__(self):
-        return self.N * 2 if self.split != 'test' else self.N
+        return self.N
     
     def __getitem__(self, idx):
-        if idx < self.N:
-            f_images = self.f_images[idx]
-            m_images = self.m_images[idx]
-            f_keypoints = self.f_keypoints[idx]
-            m_keypoints = self.m_keypoints[idx]
-            f_mask = self.f_masks[idx]
-            m_mask = self.m_masks[idx]
+        # if idx < self.N:
+        item = self.reg_list[idx]
+        if self.split == 'train':
+            if np.random.rand() < 0.5:
+                f_images = item['fixed']
+                m_images = item['moving']
+                f_keypoints = item['fixed_kps']
+                m_keypoints = item['moving_kps']
+                f_mask = item['fixed_mask']
+                m_mask = item['moving_mask']
+            else:
+                # flip the images and keypoints
+                f_images = item['moving']
+                m_images = item['fixed']
+                f_keypoints = item['moving_kps']
+                m_keypoints = item['fixed_kps']
+                f_mask = item['moving_mask']
+                m_mask = item['fixed_mask']
         else:
-            f_images = self.m_images[idx - self.N]
-            m_images = self.f_images[idx - self.N]
-            f_keypoints = self.m_keypoints[idx - self.N]
-            m_keypoints = self.f_keypoints[idx - self.N]
-            f_mask = self.m_masks[idx - self.N]
-            m_mask = self.f_masks[idx - self.N]
+            f_images = item['fixed']
+            m_images = item['moving']
+            f_keypoints = item['fixed_kps']
+            m_keypoints = item['moving_kps']
+            f_mask = item['fixed_mask']
+            m_mask = item['moving_mask']
         
         subject_name = osp.basename(f_images).split('_')[1]
-        
         spacing = nib.load(m_images).header.get_zooms()[:3]
         # given the images and masks, get the keypoints
         f_mask, m_mask = nib.load(f_mask).get_fdata().squeeze(), nib.load(m_mask).get_fdata().squeeze()
-        f_image = nib.load(f_images).get_fdata().squeeze() * f_mask
-        m_image = nib.load(m_images).get_fdata().squeeze() * m_mask
-
-        # flip image to conform to the challenge format
-        f_image = f_image[::-1, ::-1] + 0
-        m_image = m_image[::-1, ::-1] + 0
-        f_mask = f_mask[::-1, ::-1] + 0
-        m_mask = m_mask[::-1, ::-1] + 0
-
-        # normalize the images
-        f_image = (f_image - f_image.min()) / (f_image.max() - f_image.min()) * f_mask
-        m_image = (m_image - m_image.min()) / (m_image.max() - m_image.min()) * m_mask
+        f_image = process_image(nib.load(f_images).get_fdata().squeeze(), f_mask)
+        m_image = process_image(nib.load(m_images).get_fdata().squeeze(), m_mask)
         # use mind features if specified
         if self.use_mind:
             f_image = MINDSSC(torch.from_numpy(f_image)[None, None].float().cuda())[0].cpu().numpy() * f_mask[None]
@@ -166,13 +161,6 @@ class LungCT(Dataset):
             # load keypoints
             f_kps = np.array(pd.read_csv(f_keypoints)) + 0
             m_kps = np.array(pd.read_csv(m_keypoints)) + 0
-            # flip keypoints to conform to the challenge format
-            print(f_image.shape, f_kps.shape)
-            f_kps[:, 0] = f_image.shape[1] - f_kps[:, 0]
-            f_kps[:, 1] = f_image.shape[2] - f_kps[:, 1]
-            m_kps[:, 0] = m_image.shape[1] - m_kps[:, 0]
-            m_kps[:, 1] = m_image.shape[2] - m_kps[:, 1]
-
             # convert to torch tensors and normalize
             f_kps = to_torch_kps(f_kps, f_image.shape[-3:]) + 0
             m_kps = to_torch_kps(m_kps, m_image.shape[-3:]) + 0
