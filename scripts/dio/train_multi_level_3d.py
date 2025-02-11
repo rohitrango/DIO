@@ -80,6 +80,12 @@ def torch2wandbimg(tensor, mask_data=None):
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+def try_add(cfg, key, value):
+    try:
+        _ = cfg[key]
+    except:
+        OmegaConf.update(cfg, key, value, force_add=True)
+
 def setup_ddp(rank, world_size, port=12355):
     # setup ddp environment
     os.environ['MASTER_ADDR'] = 'localhost'
@@ -249,6 +255,9 @@ def main(rank, cfg, world_size=1):
     else:
         raise ValueError(f"Unknown solver: {cfg.diffopt.solver}")
     
+    try_add(cfg.diffopt, 'hessian_type', 'jfb')
+    print("Using hessian type: ", cfg.diffopt.hessian_type)
+    
     model.train()
     # load NCC and Dice losses here
     feature_loss_fn = _get_loss_function_factory(cfg.diffopt.feature_loss_fn, cfg, spatial_dims=3)
@@ -341,6 +350,7 @@ def main(rank, cfg, world_size=1):
             ## Run multi-scale optimization
             displacements, losses_opt, jacnorm = diffopt_solver(fixed_features, moving_features,
                                 iterations=iterations, loss_function=feature_loss_fn, 
+                                hessian_type=cfg.diffopt.hessian_type,
                                 phantom_step=cfg.diffopt.phantom_step, n_phantom_steps=cfg.diffopt.n_phantom_steps,
                                 debug=True, convergence_eps=cfg.diffopt.convergence_eps, learning_rate=cfg.diffopt.learning_rate,
                                 gaussian_grad=gaussian_grad, gaussian_warp=gaussian_warp)
@@ -602,6 +612,7 @@ def main(rank, cfg, world_size=1):
                 with torch.set_grad_enabled(True):
                     displacements, losses_opt, jacnorm = diffopt_solver(fixed_features, moving_features,
                                         iterations=iterations, loss_function=feature_loss_fn, 
+                                        hessian_type=cfg.diffopt.hessian_type,
                                         phantom_step=cfg.diffopt.phantom_step, n_phantom_steps=cfg.diffopt.n_phantom_steps,
                                         debug=True,
                                         gaussian_grad=gaussian_grad, gaussian_warp=gaussian_warp)

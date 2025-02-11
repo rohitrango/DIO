@@ -47,6 +47,72 @@ class MultTensorLayer(torch.autograd.Function):
 
 no_backprop_mult = MultTensorLayer.apply
 
+def print_percentiles(tensor, name, percentiles=[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]):
+    flat_tensor = tensor.flatten()
+    for percentile in percentiles:
+        print(f"{name} Percentile {percentile*100}%: {torch.quantile(flat_tensor, percentile).item()}")
+    print("-"*100)
+
+class IFTLayer(torch.autograd.Function):
+    ''' Implicit Function Theorem Layer '''
+    @staticmethod
+    def forward(ctx, warp, fixed_feature, moving_feature, grid, gaussian_grad, gaussian_warp):
+        ctx.save_for_backward(warp, fixed_feature, moving_feature, grid, gaussian_grad, gaussian_warp)
+        return warp
+    
+    @staticmethod
+    def backward(ctx, grad_warp):
+        ''' given dT/dw, we compute dT/dF '''
+        warp, fixed_feature, moving_feature, grid, gaussian_grad, gaussian_warp = ctx.saved_tensors
+        dims = warp.shape[-1]
+
+        if gaussian_grad is not None:
+            v2img = v2img_2d if dims == 2 else v2img_3d
+            img2v = img2v_2d if dims == 2 else img2v_3d
+            grad_warp = img2v(separable_filtering(v2img(grad_warp), gaussian_grad))
+        
+        # print_percentiles(torch.norm(grad_warp, p=2, dim=-1), 'grad_warp')
+
+        # grad_warp = grad_result
+        # return grad_warp, None, None, None, None, None
+        with torch.enable_grad():
+            # enable grad for warp if it does not exist
+            if not warp.requires_grad:
+                warp.requires_grad_(True)
+            
+            grid_sample_fn = grid_sample_2d if dims == 2 else grid_sample_3d
+
+            moved_feature = grid_sample_fn(moving_feature, grid + warp, align_corners=align_corners)
+            loss = F.mse_loss(moved_feature, fixed_feature)
+            rho = torch.autograd.grad(loss, [warp], create_graph=True)[0]  # C(w, Ff, Fm)
+            H = []
+            for _ in range(dims):
+                H.append(torch.autograd.grad(rho[..., _].sum(), [warp], create_graph=True)[0])
+            H = torch.stack(H, dim=-1)
+
+            # print(H.shape, grad_warp.shape)
+            if dims == 3:
+                eye = 1e-4 * torch.eye(3, device=H.device)[None, None, None, None]
+            else:
+                eye = 1e-4 * torch.eye(2, device=H.device)[None, None, None]
+            grad_warp_m = torch.linalg.solve(H + eye, grad_warp).detach()  # BHWDd
+            # grad_warp_m = torch.linalg.lstsq(H, grad_warp).solution.detach()
+            # print(grad_warp_m.shape)
+            # print_percentiles(torch.norm(grad_warp_m, p=2, dim=-1), 'grad_warp_m')
+            # multiply with d(rho)/dF 
+            prod = torch.sum(grad_warp_m * rho)
+            grad_fixed_feature = None
+            grad_moving_feature = None
+            if fixed_feature.requires_grad:
+                grad_fixed_feature = torch.autograd.grad(-prod, [fixed_feature], create_graph=False)[0]  # BHWDc
+                # print_percentiles(torch.norm(grad_fixed_feature, p=2, dim=1), 'grad_fixed_feature')
+            if moving_feature.requires_grad:
+                grad_moving_feature = torch.autograd.grad(-prod, [moving_feature], create_graph=False)[0]  # BHWDc
+                # print_percentiles(torch.norm(grad_moving_feature, p=2, dim=1), 'grad_moving_feature')
+                # grad_fixed_feature, grad_moving_feature = torch.autograd.grad(-prod, [fixed_feature, moving_feature], create_graph=False)[0]  # BHWDc
+        # input("...")
+        return grad_warp, grad_fixed_feature, grad_moving_feature, None, None, None
+
 def multi_scale_diffeomorphic_solver(
         fixed_features: List[torch.Tensor],
         moving_features: List[torch.Tensor],
@@ -225,6 +291,9 @@ def multi_scale_diffeomorphic_solver(
                     vJ = torch.autograd.grad(warp, warp_old, v, create_graph=True, retain_graph=True)[0]
                     jacobian_norm = jacobian_norm + (vJ.norm()**2).mean() / np.prod(v.shape)
             
+        elif hessian_type == 'ift':
+            warp = IFTLayer.apply(warp, fixed_feature, moving_feature, grid, gaussian_grad, gaussian_warp)
+
         elif hessian_type == 'adam':
             raise NotImplementedError('Adam hessian not implemented yet')
         else:
@@ -421,6 +490,10 @@ def multi_scale_warp_solver(
                     vJ = torch.autograd.grad(warp, warp_old, v, create_graph=True, retain_graph=True)[0]
                     jacobian_norm = jacobian_norm + (vJ.norm()**2).mean() / np.prod(v.shape) / return_jacobian_norm
             
+        elif hessian_type == 'ift':
+            # IFT layer here
+            warp = IFTLayer.apply(warp, fixed_feature, moving_feature, grid, gaussian_grad, gaussian_warp)
+
         elif hessian_type == 'adam':
             raise NotImplementedError('Adam hessian not implemented yet')
         else:
@@ -441,7 +514,6 @@ def multi_scale_warp_solver(
         return all_warps, losses, jacobian_norm
     else:
         return all_warps, jacobian_norm
-
 
 def multi_scale_affine3d_and_freeform_solver(
         fixed_features: List[torch.Tensor],

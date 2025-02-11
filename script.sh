@@ -48,3 +48,7 @@ echo PYTHONPATH=./ python scripts/dio/train_multi_level_3d_kps.py --config-name 
 
 ## best runs
 PYTHONPATH=./ python scripts/dio/test_multi_level_3d_kps.py --config-path ../../saved_models/nlst/nlst_lkumini_fireants_alllvl_kps0.01_nothres --config-name config.yaml hydra.job.chdir=False +tv_coeff_test=0.05 diffopt.learning_rate=0.75 +learn2reg=True
+
+
+# trying out IFT
+PYTHONPATH=./ python scripts/dio/train_multi_level_3d.py  --config-path ../..//saved_models/oasis_ml_4x2x1x/oasis_lku_l2_per98_mse/ --config-name config.yaml exp_name=oasis_l2_98_mse_ift +diffopt.hessian_type=ift resume=False
