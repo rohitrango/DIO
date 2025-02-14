@@ -17,8 +17,14 @@ Run the commands as
 
 ```PYTHONPATH=./ python ... ```
 
-## Abdomen
+## Brain
 
 ```python
-PYTHONPATH=./ python scripts/dio/train_multi_level_3d.py --config-name abdomen-mrct-3d exp_name=abdomen_trial deploy=False
+python train_multi_level_3d.py --config-name oasis_4x2x1x_unetencoder exp_name=oasis_lku_l2 loss.img_loss=mse train.epochs=500 model.name=lku dataset.data_root=/path/to/OASIS/
+```
+
+## Lung
+
+```python
+PYTHONPATH=./ python scripts/dio/train_multi_level_3d_kps.py --config-name nlst exp_name=nlst_lkumini_fireants_alllvl_tv10.0 diffopt.warp_type=diffeomorphic diffopt.learning_rate=0.5 train.train_new_level=[0] loss.weight_tv=10.0
 ```
