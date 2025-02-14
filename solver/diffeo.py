@@ -14,6 +14,7 @@ from solver.affine import run_affine_transform_3d
 from packaging import version
 import logging
 from logging import getLogger
+import os
 logging.basicConfig(level=logging.INFO)
 
 logger = getLogger(__name__)
@@ -89,6 +90,11 @@ class IFTLayer(torch.autograd.Function):
             for _ in range(dims):
                 H.append(torch.autograd.grad(rho[..., _].sum(), [warp], create_graph=True)[0])
             H = torch.stack(H, dim=-1)
+            # save 
+            #eigvals = torch.linalg.eigvals(H).flatten().detach().cpu().numpy()
+            #if not os.path.exists("./hessian_eig.npy"):
+                #np.save("./hessian_eig.npy", eigvals)
+            #input(".saved.")
 
             # print(H.shape, grad_warp.shape)
             if dims == 3:
