@@ -99,7 +99,7 @@
   <div class="container is-max-desktop">
     <div class="hero-body">
       <video id="teaser" autoplay muted loop playsinline height="100%">
-        <source src="./DIO-trailer.mov"
+        <source src="./DIO-trailer.mp4"
                 type="video/mp4">
       </video>
       <h2 class="subtitle has-text-centered">
@@ -164,6 +164,20 @@
             Deep Learning for Image Registration (DLIR) methods have achieved remarkable speed improvements but often sacrifice the robustness and invariances of traditional optimization methods. Most existing DLIR architectures do not explicitly incorporate the invariances required for dense correspondence matching, necessitating vast amounts of data to learn these invariances. Since large datasets are scarce in medical imaging, existing DLIR methods exhibit brittle performance under domain shift.
           </p>
         </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Robustness Figure -->
+<section class="section">
+  <div class="container is-max-desktop">
+    <div class="columns is-centered has-text-centered">
+      <div class="column is-full-width">
+        <img src="./robustness.jpg" alt="Robustness comparison across out-of-distribution datasets" style="width: 100%; max-width: 1000px; margin: 2rem auto; display: block;">
+        <p class="content has-text-justified" style="margin-top: 1rem;">
+          <strong>Boxplots of Dice scores for three out-of-distribution datasets.</strong> DIO performs significantly better across three datasets without additional finetuning. Contrary to other baselines that output warp fields considering 1 mm isotropic data, leading to a performance drop with anisotropic volumes, DIO performs better with anisotropic data due to the optimization's resolution-agnostic nature. Even with image-space instance optimization, almost all baselines underperform compared to DIO.
+        </p>
       </div>
     </div>
   </div>
